@@ -176,20 +176,19 @@ export default function TagStudio() {
       {/* Body */}
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         {/* Image */}
-        <div style={{width:480,flexShrink:0,borderRight:"1px solid #2a2a2a",display:"flex",flexDirection:"column",padding:18,gap:12,overflow:"hidden"}}>
+        <div style={{width:480,flexShrink:0,borderRight:"1px solid #2a2a2a",display:"flex",flexDirection:"column",padding:"12px 14px",gap:8,overflow:"hidden"}}>
           {look ? <>
             <div style={{flex:1,minHeight:0,background:"#1a1a1a",borderRadius:2,overflow:"hidden",position:"relative"}}>
               {!imgLoaded && <div style={{position:"absolute",inset:0,background:"#1a1a1a"}}/>}
               <img key={look.cloudinary_url} src={look.cloudinary_url} alt="" onLoad={()=>setImgLoaded(true)}
                 style={{width:"100%",height:"100%",objectFit:"contain",display:"block",opacity:imgLoaded?1:0,transition:"opacity 0.3s"}}/>
             </div>
-            <div style={{flexShrink:0}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+            <div style={{flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
                 <span style={{fontSize:12,letterSpacing:"0.1em",color:"#e8e4dc",textTransform:"uppercase",fontWeight:700}}>{look.brands?.name}</span>
-                {look.season_display && <span style={{fontSize:11,color:"#888"}}>{look.season_display}</span>}
+                {look.season_display && <span style={{fontSize:11,color:"#888",marginLeft:10}}>{look.season_display}</span>}
               </div>
-              {look.caption && <p style={{fontSize:11,color:"#999",lineHeight:1.6,margin:"0 0 6px",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{look.caption}</p>}
-              <div><span style={{fontSize:20,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:11,color:"#666",letterSpacing:"0.05em"}}> tags applied</span></div>
+              <div><span style={{fontSize:16,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:11,color:"#666"}}> tags</span></div>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
               <button onClick={prev} style={{background:"none",border:"1px solid #333",color:"#aaa",padding:"6px 14px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===0?0.2:1}}>← Prev</button>
