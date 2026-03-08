@@ -1,0 +1,6 @@
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #0e0e0e; }
+::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #333; }
