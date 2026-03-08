@@ -95,7 +95,7 @@ export default function TagStudio() {
     setLoading(false);
   };
 
-  const loadTags = async (lookId) => {
+  const loadTags = async (lookId: string) => {
     const data = await sb(`look_tags?look_id=eq.${lookId}&source=eq.human&select=tag_id`);
     setActiveTags(new Set(data.map(t => t.tag_id)));
   };
