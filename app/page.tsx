@@ -28,7 +28,7 @@ const TAG_TYPE_ORDER = [
   "techniques","construction",
 ];
 
-const TYPE_LABELS = {
+const TYPE_LABELS: {[key: string]: string} = {
   "garment types":"Garment","silouhettes":"Silhouette","length":"Length",
   "color":"Color","color intensity":"Intensity","color complexity":"Complexity","color palette":"Palette",
   "materials":"Material","patterns":"Pattern","pattern-scale":"Scale",
@@ -97,10 +97,10 @@ export default function TagStudio() {
 
   const loadTags = async (lookId: string) => {
     const data = await sb(`look_tags?look_id=eq.${lookId}&source=eq.human&select=tag_id`);
-    setActiveTags(new Set(data.map(t => t.tag_id)));
+    setActiveTags(new Set(data.map((t: any) => t.tag_id)));
   };
 
-  const toggleTag = async (tagId) => {
+  const toggleTag = async (tagId: string) => {
     const look = filtered[idx];
     if (!look) return;
     setSaving(true);
@@ -165,7 +165,7 @@ export default function TagStudio() {
           <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)}
             style={{background:"#111",border:"1px solid #222",color:"#777",padding:"5px 8px",fontSize:11,borderRadius:2,outline:"none",cursor:"pointer"}}>
             <option value="all">All Brands</option>
-            {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <span style={{fontSize:10,letterSpacing:"0.08em",minWidth:44,textAlign:"right",transition:"all 0.3s",opacity:saving||flash?1:0,color:flash&&!saving?"#c9a84c":"#555"}}>
             {saving?"saving…":"saved ✓"}
