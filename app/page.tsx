@@ -150,24 +150,24 @@ export default function TagStudio() {
   return (
     <div style={{fontFamily:"Georgia,serif",background:"#0e0e0e",color:"#e8e4dc",height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {/* Header */}
-      <div style={{display:"flex",alignItems:"center",padding:"13px 24px",borderBottom:"1px solid #1c1c1c",gap:16,flexShrink:0}}>
+      <div style={{display:"flex",alignItems:"center",padding:"13px 24px",borderBottom:"1px solid #2a2a2a",gap:16,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:8,minWidth:130}}>
           <span style={{fontSize:13,letterSpacing:"0.2em",color:"#c9a84c",fontWeight:700}}>GFLB</span>
-          <span style={{fontSize:9,letterSpacing:"0.15em",color:"#383838",textTransform:"uppercase"}}>Tag Studio</span>
+          <span style={{fontSize:10,letterSpacing:"0.15em",color:"#666",textTransform:"uppercase"}}>Tag Studio</span>
         </div>
         <div style={{flex:1,display:"flex",alignItems:"center",gap:12}}>
-          <div style={{flex:1,height:1,background:"#1c1c1c"}}>
-            <div style={{height:"100%",background:"#c9a84c",width:`${pct}%`,transition:"width 0.3s"}}/>
+          <div style={{flex:1,height:2,background:"#2a2a2a",borderRadius:1}}>
+            <div style={{height:"100%",background:"#c9a84c",width:`${pct}%`,transition:"width 0.3s",borderRadius:1}}/>
           </div>
-          <span style={{fontSize:11,color:"#383838",whiteSpace:"nowrap"}}>{idx+1} / {filtered.length}</span>
+          <span style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>{idx+1} / {filtered.length}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)}
-            style={{background:"#111",border:"1px solid #222",color:"#777",padding:"5px 8px",fontSize:11,borderRadius:2,outline:"none",cursor:"pointer"}}>
+            style={{background:"#1a1a1a",border:"1px solid #333",color:"#ccc",padding:"5px 8px",fontSize:12,borderRadius:2,outline:"none",cursor:"pointer"}}>
             <option value="all">All Brands</option>
             {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
-          <span style={{fontSize:10,letterSpacing:"0.08em",minWidth:44,textAlign:"right",transition:"all 0.3s",opacity:saving||flash?1:0,color:flash&&!saving?"#c9a84c":"#555"}}>
+          <span style={{fontSize:11,letterSpacing:"0.08em",minWidth:52,textAlign:"right",transition:"all 0.3s",opacity:saving||flash?1:0,color:flash&&!saving?"#c9a84c":"#888"}}>
             {saving?"saving…":"saved ✓"}
           </span>
         </div>
@@ -176,42 +176,42 @@ export default function TagStudio() {
       {/* Body */}
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         {/* Image */}
-        <div style={{width:340,flexShrink:0,borderRight:"1px solid #161616",display:"flex",flexDirection:"column",padding:18,gap:12,overflow:"hidden"}}>
+        <div style={{width:480,flexShrink:0,borderRight:"1px solid #2a2a2a",display:"flex",flexDirection:"column",padding:18,gap:12,overflow:"hidden"}}>
           {look ? <>
-            <div style={{flex:1,minHeight:0,background:"#111",borderRadius:2,overflow:"hidden",position:"relative"}}>
-              {!imgLoaded && <div style={{position:"absolute",inset:0,background:"#141414"}}/>}
+            <div style={{flex:1,minHeight:0,background:"#1a1a1a",borderRadius:2,overflow:"hidden",position:"relative"}}>
+              {!imgLoaded && <div style={{position:"absolute",inset:0,background:"#1a1a1a"}}/>}
               <img key={look.cloudinary_url} src={look.cloudinary_url} alt="" onLoad={()=>setImgLoaded(true)}
                 style={{width:"100%",height:"100%",objectFit:"contain",display:"block",opacity:imgLoaded?1:0,transition:"opacity 0.3s"}}/>
             </div>
             <div style={{flexShrink:0}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-                <span style={{fontSize:11,letterSpacing:"0.1em",color:"#e8e4dc",textTransform:"uppercase",fontWeight:700}}>{look.brands?.name}</span>
-                {look.season_display && <span style={{fontSize:10,color:"#383838"}}>{look.season_display}</span>}
+                <span style={{fontSize:12,letterSpacing:"0.1em",color:"#e8e4dc",textTransform:"uppercase",fontWeight:700}}>{look.brands?.name}</span>
+                {look.season_display && <span style={{fontSize:11,color:"#888"}}>{look.season_display}</span>}
               </div>
-              {look.caption && <p style={{fontSize:10,color:"#3a3a3a",lineHeight:1.6,margin:"0 0 6px",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{look.caption}</p>}
-              <div><span style={{fontSize:18,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:10,color:"#2e2e2e",letterSpacing:"0.05em"}}> tags applied</span></div>
+              {look.caption && <p style={{fontSize:11,color:"#999",lineHeight:1.6,margin:"0 0 6px",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{look.caption}</p>}
+              <div><span style={{fontSize:20,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:11,color:"#666",letterSpacing:"0.05em"}}> tags applied</span></div>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-              <button onClick={prev} style={{background:"none",border:"1px solid #1e1e1e",color:"#444",padding:"5px 12px",fontSize:10,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===0?0.2:1}}>← Prev</button>
-              <span style={{fontSize:9,color:"#252525",letterSpacing:"0.05em"}}>arrow keys</span>
-              <button onClick={next} style={{background:"none",border:"1px solid #1e1e1e",color:"#444",padding:"5px 12px",fontSize:10,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===filtered.length-1?0.2:1}}>Next →</button>
+              <button onClick={prev} style={{background:"none",border:"1px solid #333",color:"#aaa",padding:"6px 14px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===0?0.2:1}}>← Prev</button>
+              <span style={{fontSize:10,color:"#555",letterSpacing:"0.05em"}}>arrow keys</span>
+              <button onClick={next} style={{background:"none",border:"1px solid #333",color:"#aaa",padding:"6px 14px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===filtered.length-1?0.2:1}}>Next →</button>
             </div>
-          </> : <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#2a2a2a",fontSize:12,letterSpacing:"0.1em"}}>No looks</div>}
+          </> : <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#555",fontSize:12,letterSpacing:"0.1em"}}>No looks</div>}
         </div>
 
         {/* Tags */}
         <div style={{flex:1,overflowY:"auto",padding:"20px 26px",display:"flex",flexDirection:"column",gap:20}}>
           {orderedTypes.map(type => (
             <div key={type}>
-              <div style={{fontSize:9,letterSpacing:"0.2em",textTransform:"uppercase",color:"#2e2e2e",paddingBottom:8,borderBottom:"1px solid #161616",marginBottom:8}}>
+              <div style={{fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"#888",paddingBottom:8,borderBottom:"1px solid #2a2a2a",marginBottom:8}}>
                 {TYPE_LABELS[type]||type}
               </div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                 {(tagsByType[type]||[]).map(tag => {
                   const on = activeTags.has(tag.id);
                   return (
                     <button key={tag.id} onClick={() => toggleTag(tag.id)}
-                      style={{background:on?"#1c1811":"#111",border:`1px solid ${on?"#c9a84c":"#1e1e1e"}`,color:on?"#c9a84c":"#4a4a4a",padding:"4px 11px",fontSize:11,letterSpacing:"0.03em",cursor:"pointer",borderRadius:2,transition:"all 0.1s",fontFamily:"Georgia,serif"}}>
+                      style={{background:on?"#1c1811":"#1a1a1a",border:`1px solid ${on?"#c9a84c":"#333"}`,color:on?"#c9a84c":"#bbb",padding:"5px 13px",fontSize:12,letterSpacing:"0.03em",cursor:"pointer",borderRadius:2,transition:"all 0.1s",fontFamily:"Georgia,serif"}}>
                       {tag.name}{on?" ✓":""}
                     </button>
                   );
@@ -222,25 +222,25 @@ export default function TagStudio() {
 
           {/* Add tag */}
           <div>
-            <div style={{fontSize:9,letterSpacing:"0.2em",textTransform:"uppercase",color:"#2e2e2e",paddingBottom:8,borderBottom:"1px solid #161616",marginBottom:8}}>New Tag</div>
+            <div style={{fontSize:10,letterSpacing:"0.2em",textTransform:"uppercase",color:"#888",paddingBottom:8,borderBottom:"1px solid #2a2a2a",marginBottom:8}}>New Tag</div>
             {!showAdd ? (
-              <button onClick={()=>setShowAdd(true)} style={{background:"none",border:"1px dashed #222",color:"#333",padding:"4px 11px",fontSize:10,cursor:"pointer",borderRadius:2,letterSpacing:"0.05em"}}>+ Add tag</button>
+              <button onClick={()=>setShowAdd(true)} style={{background:"none",border:"1px dashed #444",color:"#888",padding:"5px 13px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.05em"}}>+ Add tag</button>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:7,maxWidth:280}}>
                 <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Tag name"
                   onKeyDown={e=>e.key==="Enter"&&addTag()} autoFocus
-                  style={{background:"#111",border:"1px solid #222",color:"#e8e4dc",padding:"6px 9px",fontSize:11,borderRadius:2,outline:"none",fontFamily:"Georgia,serif"}}/>
+                  style={{background:"#1a1a1a",border:"1px solid #333",color:"#e8e4dc",padding:"7px 10px",fontSize:12,borderRadius:2,outline:"none",fontFamily:"Georgia,serif"}}/>
                 <select value={newType} onChange={e=>setNewType(e.target.value)}
-                  style={{background:"#111",border:"1px solid #222",color:"#777",padding:"6px 9px",fontSize:11,borderRadius:2,outline:"none",cursor:"pointer"}}>
+                  style={{background:"#1a1a1a",border:"1px solid #333",color:"#aaa",padding:"7px 10px",fontSize:12,borderRadius:2,outline:"none",cursor:"pointer"}}>
                   <option value="">Select type…</option>
                   {orderedTypes.map(t=><option key={t} value={t}>{TYPE_LABELS[t]||t}</option>)}
                   <option value="cultural">Cultural</option>
                 </select>
                 <div style={{display:"flex",gap:7}}>
-                  <button onClick={addTag} disabled={adding} style={{background:"#c9a84c",border:"none",color:"#0e0e0e",padding:"5px 14px",fontSize:10,cursor:"pointer",borderRadius:2,fontWeight:700,letterSpacing:"0.06em"}}>
+                  <button onClick={addTag} disabled={adding} style={{background:"#c9a84c",border:"none",color:"#0e0e0e",padding:"6px 16px",fontSize:12,cursor:"pointer",borderRadius:2,fontWeight:700,letterSpacing:"0.06em"}}>
                     {adding?"…":"Add & Apply"}
                   </button>
-                  <button onClick={()=>{setShowAdd(false);setNewName("");setNewType("");}} style={{background:"none",border:"1px solid #222",color:"#444",padding:"5px 14px",fontSize:10,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em"}}>
+                  <button onClick={()=>{setShowAdd(false);setNewName("");setNewType("");}} style={{background:"none",border:"1px solid #333",color:"#aaa",padding:"6px 16px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em"}}>
                     Cancel
                   </button>
                 </div>
