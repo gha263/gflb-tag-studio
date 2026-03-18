@@ -80,17 +80,20 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, b, t] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,brands(name)&order=brand_id,created_at"),
+        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display&order=brand_id,created_at"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
       ]);
+      const brandMap: Record<string,string> = {};
+      b.forEach((br: any) => { brandMap[br.id] = br.name; });
+      const looksWithBrand = l.map((look: any) => ({ ...look, brands: { name: brandMap[look.brand_id] || "" } }));
       const usable = t.filter((t: any) => !EXCLUDED.includes(t.tag_type));
       const grouped = usable.reduce((acc: Record<string,any[]>, tag: any) => {
         if (!acc[tag.tag_type]) acc[tag.tag_type] = [];
         acc[tag.tag_type].push(tag);
         return acc;
       }, {});
-      setLooks(l); setFiltered(l); setBrands(b); setTagsByType(grouped);
+      setLooks(looksWithBrand); setFiltered(looksWithBrand); setBrands(b); setTagsByType(grouped);
     } catch(e) { console.error(e); }
     setLoading(false);
   };
