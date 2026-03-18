@@ -80,7 +80,7 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, b, t] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display&order=brand_id,created_at"),
+        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url&order=brand_id,created_at"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
       ]);
@@ -191,7 +191,10 @@ export default function TagStudio() {
                 <span style={{fontSize:12,letterSpacing:"0.1em",color:"#e8e4dc",textTransform:"uppercase",fontWeight:700}}>{look.brands?.name}</span>
                 {look.season_display && <span style={{fontSize:11,color:"#888",marginLeft:10}}>{look.season_display}</span>}
               </div>
-              <div><span style={{fontSize:16,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:11,color:"#666"}}> tags</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                {look.source_url && <a href={look.source_url} target="_blank" rel="noreferrer" style={{fontSize:11,color:"#c9a84c",textDecoration:"none",letterSpacing:"0.05em",opacity:0.7}}>↗ source</a>}
+                <div><span style={{fontSize:16,color:"#c9a84c"}}>{activeTags.size}</span><span style={{fontSize:11,color:"#666"}}> tags</span></div>
+              </div>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
               <button onClick={prev} style={{background:"none",border:"1px solid #333",color:"#aaa",padding:"6px 14px",fontSize:12,cursor:"pointer",borderRadius:2,letterSpacing:"0.06em",opacity:idx===0?0.2:1}}>← Prev</button>
