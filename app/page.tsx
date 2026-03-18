@@ -80,7 +80,7 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, b, t] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,look_number,brands(name)&order=brand_id,look_number"),
+        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,brands(name)&order=brand_id,created_at"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
       ]);
