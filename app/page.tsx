@@ -259,8 +259,8 @@ export default function TagStudio() {
                   />
                 </div>
 
-                {/* Meta panel below image */}
-                <div style={{flexShrink:0,background:C.lift1,padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
+                {/* Meta panel below image — fixed height so Prev/Next always visible */}
+                <div style={{flexShrink:0,background:C.lift1,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
 
                   {/* Brand / season / source / tag count */}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -271,7 +271,7 @@ export default function TagStudio() {
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       {look.source_url && (
                         <a href={look.source_url} target="_blank" rel="noreferrer"
-                          style={{fontSize:12,color:C.text,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,opacity:0.85,fontWeight:500}}>
+                          style={{fontSize:12,color:C.text,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,fontWeight:500}}>
                           ↗ source
                         </a>
                       )}
@@ -281,42 +281,42 @@ export default function TagStudio() {
                     </div>
                   </div>
 
-                  {/* Notes */}
+                  {/* Notes — fixed max height, scrollable if long */}
                   {!editingNotes ? (
                     <div
                       onClick={() => setEditingNotes(true)}
                       style={{
-                        fontSize:13,color:notes?C.text:C.dim,
-                        background:C.lift2,borderRadius:12,
-                        padding:"9px 14px",cursor:"pointer",
+                        fontSize:14,color:notes?C.text:C.dim,
+                        background:C.lift2,borderRadius:10,
+                        padding:"8px 12px",cursor:"pointer",
                         lineHeight:1.5,fontStyle:notes?"normal":"italic",
-                        minHeight:38,
+                        maxHeight:72,overflowY:"auto",
                       }}>
                       {notes || "Add notes…"}
                     </div>
                   ) : (
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       <textarea
                         value={notes}
                         onChange={e => setNotes(e.target.value)}
-                        autoFocus rows={3}
-                        style={{background:"#484848",border:"1.5px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",resize:"vertical",fontFamily:"Inter,sans-serif",lineHeight:1.5,width:"100%"}}
+                        autoFocus rows={2}
+                        style={{background:"#484848",border:"1.5px solid #fff",color:C.text,padding:"8px 12px",fontSize:14,borderRadius:10,outline:"none",resize:"none",fontFamily:"Inter,sans-serif",lineHeight:1.5,width:"100%"}}
                       />
                       <div style={{display:"flex",gap:8}}>
                         <button onClick={saveNotes} disabled={savingNotes}
-                          style={{background:C.white,border:"none",color:"#212121",padding:"7px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                          style={{background:C.white,border:"none",color:"#212121",padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
                           {savingNotes?"…":"Save"}
                         </button>
                         <button onClick={() => { setEditingNotes(false); setNotes(filtered[idx]?.notes||""); }}
-                          style={{background:C.lift2,border:"none",color:C.muted,padding:"7px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                          style={{background:C.lift2,border:"none",color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
                           Cancel
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {/* Prev / Next */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  {/* Prev / Next — always visible */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:2}}>
                     <button onClick={prev}
                       style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===0?0.25:1}}>
                       ← Prev
@@ -338,7 +338,7 @@ export default function TagStudio() {
           <div style={{flex:1,overflowY:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:20,background:C.bg}}>
             {orderedTypes.map(type => (
               <div key={type}>
-                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted,paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0",paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
                   {TYPE_LABELS[type]||type}
                 </div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
