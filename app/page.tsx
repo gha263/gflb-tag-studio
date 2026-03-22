@@ -208,18 +208,13 @@ export default function TagStudio() {
         textarea::placeholder { color: #888 !important; }
       `}</style>
 
-      <div style={{fontFamily:"Inter,sans-serif",background:C.bg,color:C.text,height:"100vh",display:"flex",flexDirection:"column",overflow:"hidden",fontSize:14,lineHeight:1.5}}>
+      <div style={{fontFamily:"Inter,sans-serif",background:C.bg,color:C.text,height:"calc(100vh - 44px)",display:"flex",flexDirection:"column",overflow:"hidden",fontSize:14,lineHeight:1.5}}>
 
-        {/* ── Header ── */}
-        <div style={{display:"flex",alignItems:"center",padding:"12px 20px",background:C.bg,gap:16,flexShrink:0,borderBottom:`1px solid ${C.lift1}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            <span style={{fontSize:15,fontWeight:600,color:C.text}}>Look 47</span>
-            <span style={{fontSize:13,color:C.muted,fontWeight:400}}>/ Tag Studio</span>
-          </div>
-
+        {/* ── Toolbar ── */}
+        <div style={{display:"flex",alignItems:"center",padding:"8px 20px",background:C.bg,gap:16,flexShrink:0,borderBottom:`1px solid ${C.lift1}`}}>
           {/* Progress bar */}
           <div style={{flex:1,display:"flex",alignItems:"center",gap:10}}>
-            <div style={{flex:1,height:4,background:C.lift2,borderRadius:2,overflow:"hidden"}}>
+            <div style={{flex:1,height:3,background:C.lift2,borderRadius:2,overflow:"hidden"}}>
               <div style={{height:"100%",background:C.white,width:`${pct}%`,transition:"width 0.3s",borderRadius:2}}/>
             </div>
             <span style={{fontSize:13,color:C.muted,whiteSpace:"nowrap",fontWeight:500}}>{idx+1} / {filtered.length}</span>
