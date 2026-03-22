@@ -480,21 +480,7 @@ export default function IntakePage() {
         ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
       `}</style>
 
-      <div style={{minHeight:"100vh",backgroundColor:C.bg,color:C.text,fontFamily:"Inter,sans-serif",fontSize:14,lineHeight:1.6}}>
-
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 28px",backgroundColor:C.bg,borderBottom:`1px solid ${C.lift1}`,position:"sticky",top:0,zIndex:100}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:15,fontWeight:600,color:C.text}}>Look 47</span>
-            <span style={{color:C.dim}}>/</span>
-            <span style={{fontSize:14,color:C.muted}}>Intake</span>
-          </div>
-          {successCount>0 && (
-            <div style={{fontSize:13,color:C.muted,background:C.lift1,borderRadius:20,padding:"4px 14px"}}>
-              <span style={{color:C.text,fontWeight:600}}>{successCount}</span> {successCount===1?"look":"looks"} ingested
-            </div>
-          )}
-        </div>
+      <div style={{minHeight:"calc(100vh - 44px)",backgroundColor:C.bg,color:C.text,fontFamily:"Inter,sans-serif",fontSize:14,lineHeight:1.6}}>
 
         <div style={{maxWidth:680,margin:"0 auto",padding:"24px 24px 100px"}}>
 
