@@ -100,7 +100,7 @@ const EVENTS_SEED = [
 ];
 
 const SUPABASE_URL = "https://rsslbgfbdoqxgogbuuzc.supabase.co";
-const SUPABASE_ANON_KEY = "";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJzc2xiZ2ZiZG9xeGdvZ2J1dXpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1NjE2NTUsImV4cCI6MjA3NjEzNzY1NX0.lBL-KUrQbT9N4ACc-CdMauvXmhtuG9_Jr7nhIhQz-g0";
 
 // ── Palette (matches Tag Studio) ──────────────────────────────────────────────
 const C = {
