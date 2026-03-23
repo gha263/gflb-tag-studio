@@ -83,7 +83,7 @@ export default function ReviewQueue() {
       // Get filtered looks with brand + credit + tag counts
       const filter = statusFilter === "all" ? "" : `status=eq.${statusFilter}&`;
       const data = await sb(
-        `looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,brands(name),look_credits(id),look_tags(id)&order=created_at.desc&limit=200`
+        `looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,brands!looks_brand_id_fkey(name),look_credits!look_credits_look_id_fkey(id),look_tags!look_tags_look_id_fkey(id)&order=created_at.desc&limit=200`
       );
       const mapped = data.map((l: any) => ({
         ...l,
