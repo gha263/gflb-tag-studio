@@ -210,13 +210,15 @@ function F({ label, children }: any) {
 function CreateBrandModal({ initialName, locations, onSave, onClose }: any) {
   const [name, setName] = useState(initialName || "");
   const [ig, setIg] = useState("");
+  const [website, setWebsite] = useState("");
   const [country, setCountry] = useState<any>(null);
   const [city, setCity] = useState<any>(null);
   return (
     <Modal title="New Brand" onClose={onClose} saveDisabled={!name.trim()}
-      onSave={() => onSave({ name:name.trim(), instagram_handle:ig||null, country_id:country?.id||null, city_id:city?.id||null, slug:slugify(name) })}>
+      onSave={() => onSave({ name:name.trim(), instagram_handle:ig||null, website:website||null, country_id:country?.id||null, city_id:city?.id||null, slug:slugify(name) })}>
       <F label="Name *"><input style={s.input} value={name} onChange={e=>setName(e.target.value)} autoFocus /></F>
       <F label="Instagram Handle"><input style={s.input} value={ig} onChange={e=>setIg(e.target.value)} placeholder="@handle" /></F>
+      <F label="Website"><input style={s.input} value={website} onChange={e=>setWebsite(e.target.value)} placeholder="https://..." /></F>
       <Typeahead label="Country" items={locations.filter((l:any)=>l.location_type==="country")} value={country} onChange={setCountry} onClear={()=>setCountry(null)} />
       <Typeahead label="City" items={locations.filter((l:any)=>l.location_type==="city")} value={city} onChange={setCity} onClear={()=>setCity(null)} />
     </Modal>
