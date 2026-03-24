@@ -543,8 +543,8 @@ export default function IntakePage() {
               </F>
             </div>
             <div style={s.row2}>
-              <F label="Source Account">
-                <input style={s.input} value={sourceName} onChange={e => setSourceName(e.target.value)} placeholder="@account_handle" />
+              <F label="Source Account (handle only)">
+                <input style={s.input} value={sourceName} onChange={e => setSourceName(e.target.value)} placeholder="e.g. angelabritobrand" />
               </F>
               <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 2 }}>
                 <label style={s.ckLabel}>
