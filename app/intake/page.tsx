@@ -48,13 +48,13 @@ const BRANDS_SEED = [
 ];
 
 const PEOPLE_SEED = [
-  { id: "f4da6e79-1016-46dd-98bd-c12b6fecf939", name: "Adebayo Oke-Lawal", primary_role: "creative director" },
-  { id: "d4191ed0-bf88-490a-a438-a74aedebb7a0", name: "Thebetsile Magugu", primary_role: "creative director" },
-  { id: "a2c783cd-9b62-43a4-bcac-7c10d84a41c8", name: "Rich Mnisi", primary_role: "creative director" },
-  { id: "268b1854-bd7e-458d-a516-e863311ba030", name: "Sindiso Khumalo", primary_role: "creative director" },
-  { id: "97be7108-5f20-4424-aa41-5133ea3ce9ef", name: "Priya Ahluwalia", primary_role: "creative director" },
-  { id: "20c770f9-8101-4115-aa17-bcf8c387071e", name: "Tolu Coker", primary_role: "creative director" },
-  { id: "16b49f40-8bda-40b5-bb7b-37ae1f2ebea1", name: "Lukhanyo Mdingi", primary_role: "creative director" },
+  { id: "f4da6e79-1016-46dd-98bd-c12b6fecf939", name: "Adebayo Oke-Lawal", primary_role: "creative_director" },
+  { id: "d4191ed0-bf88-490a-a438-a74aedebb7a0", name: "Thebetsile Magugu", primary_role: "creative_director" },
+  { id: "a2c783cd-9b62-43a4-bcac-7c10d84a41c8", name: "Rich Mnisi", primary_role: "creative_director" },
+  { id: "268b1854-bd7e-458d-a516-e863311ba030", name: "Sindiso Khumalo", primary_role: "creative_director" },
+  { id: "97be7108-5f20-4424-aa41-5133ea3ce9ef", name: "Priya Ahluwalia", primary_role: "creative_director" },
+  { id: "20c770f9-8101-4115-aa17-bcf8c387071e", name: "Tolu Coker", primary_role: "creative_director" },
+  { id: "16b49f40-8bda-40b5-bb7b-37ae1f2ebea1", name: "Lukhanyo Mdingi", primary_role: "creative_director" },
   { id: "b34790e5-1f4e-48d8-998e-1e1c4118ca64", name: "Kristin Lee Moolman", primary_role: "photographer" },
   { id: "3ff2d938-508a-45ac-aec5-fc75e172d633", name: "Simon Deiner", primary_role: "photographer" },
   { id: "60f15aa2-af09-47c8-8ef4-8d772af2ea76", name: "Ibrahim Kamara", primary_role: "photographer" },
@@ -228,14 +228,14 @@ function CreateBrandModal({ initialName, locations, onSave, onClose }: any) {
 function CreatePersonModal({ initialName, role, onSave, onClose }: any) {
   const [name, setName] = useState(initialName || "");
   const [ig, setIg] = useState("");
-  const [r, setR] = useState(role || "creative director");
+  const [r, setR] = useState(role || "creative_director");
   return (
     <Modal title="New Person" onClose={onClose} saveDisabled={!name.trim()}
       onSave={() => onSave({ name: name.trim(), primary_role: r, instagram_handle: ig || null, slug: slugify(name) })}>
       <F label="Name *"><input style={s.input} value={name} onChange={e => setName(e.target.value)} autoFocus /></F>
       <F label="Role">
         <select style={s.select} value={r} onChange={e => setR(e.target.value)}>
-          <option value="creative director">Creative Director</option>
+          <option value="creative_director">Creative Director</option>
           <option value="photographer">Photographer</option>
           <option value="stylist">Stylist</option>
         </select>
@@ -316,6 +316,8 @@ export default function IntakePage() {
   const [creditPhotog, setCreditPhotog] = useState<any>(null);
   const [creditStylist, setCreditStylist] = useState<any>(null);
   const [courtesy, setCourtesy] = useState(false);
+  const [isCollab, setIsCollab] = useState(false);
+  const [collabBrand, setCollabBrand] = useState<any>(null);
 
   const [event, setEvent] = useState<any>(null);
   const [scene, setScene] = useState("");
@@ -387,7 +389,7 @@ export default function IntakePage() {
         );
         const rows = await res.json();
         const person = rows?.[0]?.people;
-        if (person && !creditCD) setCreditCD({ ...person, credit_role: "creative director" });
+        if (person && !creditCD) setCreditCD({ ...person, credit_role: "creative_director" });
       } catch { /* skip */ }
     }
   }
@@ -401,7 +403,7 @@ export default function IntakePage() {
     let c; try { c = await post("people", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
     const role = modal?.role;
-    if (role === "creative director") setCreditCD({ ...c, credit_role: "creative director" });
+    if (role === "creative_director") setCreditCD({ ...c, credit_role: "creative_director" });
     else if (role === "photographer") setCreditPhotog({ ...c, credit_role: "photographer" });
     else setCreditStylist({ ...c, credit_role: "stylist" });
     setModal(null);
@@ -447,6 +449,7 @@ export default function IntakePage() {
       is_key_look: isKeyLook,
       status: "draft",
       notes: notes.trim() || null,
+      collaborating_brand_id: isCollab ? (collabBrand?.id?.startsWith("local-") ? null : collabBrand?.id || null) : null,
     };
 
     try {
@@ -486,6 +489,7 @@ export default function IntakePage() {
   function resetForm() {
     setSourceUrl(""); setCdnUrl(""); setSourceName(""); setIsKeyLook(false);
     setBrand(null); setCreditCD(null); setCreditPhotog(null); setCreditStylist(null); setCourtesy(false);
+    setIsCollab(false); setCollabBrand(null);
     setEvent(null); setScene(""); setSeasonTerm(""); setSeasonYear(""); setGender(""); setPublishDate("");
     setPhotoCity(null); setPhotoCountry(null); setNotes("");
     setPlatformId(INSTAGRAM_ID); setCustomPlatform(null);
@@ -560,10 +564,10 @@ export default function IntakePage() {
             <Typeahead label="Brand" items={brands} value={brand}
               onChange={selectBrand} onClear={() => { setBrand(null); setCreditCD(null); setCourtesy(false); }}
               onCreateClick={(name: string) => setModal({ type: "brand", name })} />
-            <Typeahead label="Creative Director" items={people.filter((p: any) => p.primary_role === "creative director")}
-              value={creditCD} onChange={(p: any) => setCreditCD({ ...p, credit_role: "creative director" })}
+            <Typeahead label="Creative Director" items={people.filter((p: any) => p.primary_role === "creative_director")}
+              value={creditCD} onChange={(p: any) => setCreditCD({ ...p, credit_role: "creative_director" })}
               onClear={() => setCreditCD(null)}
-              onCreateClick={(name: string) => setModal({ type: "person", name, role: "creative director" })} />
+              onCreateClick={(name: string) => setModal({ type: "person", name, role: "creative_director" })} />
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <label style={{ ...s.ckLabel, ...(brand ? {} : { color: C.dim, cursor: "default" }) }}>
                 <input type="checkbox" checked={courtesy} disabled={!brand} style={s.ck}
@@ -572,6 +576,20 @@ export default function IntakePage() {
               </label>
               {!brand && <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic" }}>select a brand first</span>}
             </div>
+
+            {/* Collaboration */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <label style={s.ckLabel}>
+                <input type="checkbox" checked={isCollab} style={s.ck}
+                  onChange={e => { setIsCollab(e.target.checked); if (!e.target.checked) setCollabBrand(null); }} />
+                Collaboration
+              </label>
+            </div>
+            {isCollab && (
+              <Typeahead label="Collaborating Brand" items={brands.filter((b: any) => b.id !== brand?.id)}
+                value={collabBrand} onChange={setCollabBrand} onClear={() => setCollabBrand(null)}
+                onCreateClick={(name: string) => setModal({ type: "brand", name })} />
+            )}
             {!courtesy && (
               <Typeahead label="Photographer" items={people.filter((p: any) => p.primary_role === "photographer")}
                 value={creditPhotog} onChange={(p: any) => setCreditPhotog({ ...p, credit_role: "photographer" })}
