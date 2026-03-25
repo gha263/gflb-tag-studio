@@ -123,7 +123,7 @@ export default function TagStudio() {
   };
 
   const loadTags = async (lookId: string) => {
-    const data = await sb(`look_tags?look_id=eq.${lookId}&source=eq.human&select=tag_id`);
+    const data = await sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&source=eq.human&select=tag_id`);
     setActiveTags(new Set(data.map((t: any) => t.tag_id)));
   };
 
@@ -135,10 +135,10 @@ export default function TagStudio() {
     try {
       if (next.has(tagId)) {
         next.delete(tagId);
-        await sb(`look_tags?look_id=eq.${look.id}&tag_id=eq.${tagId}&source=eq.human`, { method:"DELETE", prefer:"" });
+        await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, { method:"DELETE", prefer:"" });
       } else {
         next.add(tagId);
-        await sb("look_tags", { method:"POST", body: JSON.stringify({ look_id:look.id, tag_id:tagId, source:"human", model:null }), prefer:"resolution=merge-duplicates" });
+        await sb("entity_tags", { method:"POST", body: JSON.stringify({ entity_id:look.id, entity_type:"look", tag_id:tagId, source:"human", model:null }), prefer:"resolution=merge-duplicates" });
       }
       setActiveTags(next);
     } catch(e) { console.error(e); }
