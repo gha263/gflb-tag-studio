@@ -175,13 +175,13 @@ export default function ReviewQueue() {
 
       const filter = statusFilter === "all" ? "" : `status=eq.${statusFilter}&`;
       const data = await sb(
-        `looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collection_title,collection_description,brands!looks_brand_id_fkey(name),look_credits!look_credits_look_id_fkey(id),look_tags!look_tags_look_id_fkey(id)&order=created_at.desc&limit=200`
+        `looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collection_title,collection_description,brands!looks_brand_id_fkey(name),look_credits!look_credits_look_id_fkey(id),entity_tags(id)&order=created_at.desc&limit=200`
       );
       setLooks(data.map((l: any) => ({
         ...l,
         brand_name: l.brands?.name || "",
         credit_count: l.look_credits?.length || 0,
-        tag_count: l.look_tags?.length || 0,
+        tag_count: l.entity_tags?.length || 0,
       })));
     } catch(e) { console.error(e); }
     setLoading(false);
@@ -445,7 +445,7 @@ export default function ReviewQueue() {
                   </F>
 
                   <F label="Creative Director" span2>
-                    <Typeahead items={people.filter((p:any) => p.primary_role==="creative director")} value={editCD} onChange={setEditCD} onClear={() => setEditCD(null)} placeholder="Search creative director..." />
+                    <Typeahead items={people.filter((p:any) => p.primary_role==="creative_director")} value={editCD} onChange={setEditCD} onClear={() => setEditCD(null)} placeholder="Search creative director..." />
                   </F>
 
                   <F label="" span2>
