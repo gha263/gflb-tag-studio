@@ -174,14 +174,22 @@ export default function ReviewQueue() {
       setCounts(c);
 
       const filter = statusFilter === "all" ? "" : `status=eq.${statusFilter}&`;
-      const data = await sb(
-        `looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id),entity_tags(id)&order=created_at.desc&limit=200`
-      );
+      const [data, tagCounts] = await Promise.all([
+        sb(`looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=200`),
+        sb(`entity_tags?entity_type=eq.look&select=entity_id`),
+      ]);
+
+      // Build tag count map from entity_tags
+      const tagCountMap: Record<string, number> = {};
+      (tagCounts || []).forEach((t: any) => {
+        tagCountMap[t.entity_id] = (tagCountMap[t.entity_id] || 0) + 1;
+      });
+
       setLooks(data.map((l: any) => ({
         ...l,
         brand_name: l.brand?.name || "",
         credit_count: l.look_credits?.length || 0,
-        tag_count: l.entity_tags?.length || 0,
+        tag_count: tagCountMap[l.id] || 0,
       })));
     } catch(e) { console.error(e); }
     setLoading(false);
