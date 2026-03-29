@@ -313,8 +313,8 @@ export default function IntakePage() {
 
   const [brand, setBrand] = useState<any>(null);
   const [creditCD, setCreditCD] = useState<any>(null);
-  const [creditPhotog, setCreditPhotog] = useState<any>(null);
-  const [creditStylist, setCreditStylist] = useState<any>(null);
+  const [creditPhotogs, setCreditPhotogs] = useState<any[]>([]);
+  const [creditStylists, setCreditStylists] = useState<any[]>([]);
   const [courtesy, setCourtesy] = useState(false);
   const [isCollab, setIsCollab] = useState(false);
   const [collabBrand, setCollabBrand] = useState<any>(null);
@@ -404,8 +404,8 @@ export default function IntakePage() {
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
     const role = modal?.role;
     if (role === "creative_director") setCreditCD({ ...c, credit_role: "creative_director" });
-    else if (role === "photographer") setCreditPhotog({ ...c, credit_role: "photographer" });
-    else setCreditStylist({ ...c, credit_role: "stylist" });
+    else if (role === "photographer") setCreditPhotogs(prev => [...prev, c]);
+    else setCreditStylists(prev => [...prev, c]);
     setModal(null);
   }
   async function handleCreateEvent(data: any) {
@@ -465,8 +465,8 @@ export default function IntakePage() {
       // Insert credits
       const credits = [
         creditCD && { look_id: lookId, person_id: creditCD.id?.startsWith("local-") ? null : creditCD.id, role: "creative director" },
-        !courtesy && creditPhotog && { look_id: lookId, person_id: creditPhotog.id?.startsWith("local-") ? null : creditPhotog.id, role: "photographer" },
-        creditStylist && { look_id: lookId, person_id: creditStylist.id?.startsWith("local-") ? null : creditStylist.id, role: "stylist" },
+        ...(!courtesy ? creditPhotogs.map(p => ({ look_id: lookId, person_id: p.id?.startsWith("local-") ? null : p.id, role: "photographer" })) : []),
+        ...creditStylists.map(p => ({ look_id: lookId, person_id: p.id?.startsWith("local-") ? null : p.id, role: "stylist" })),
       ].filter((c: any) => c && c.person_id);
 
       if (credits.length > 0) {
@@ -488,7 +488,7 @@ export default function IntakePage() {
 
   function resetForm() {
     setSourceUrl(""); setCdnUrl(""); setSourceName(""); setIsKeyLook(false);
-    setBrand(null); setCreditCD(null); setCreditPhotog(null); setCreditStylist(null); setCourtesy(false);
+    setBrand(null); setCreditCD(null); setCreditPhotogs([]); setCreditStylists([]); setCourtesy(false);
     setIsCollab(false); setCollabBrand(null);
     setEvent(null); setScene(""); setSeasonTerm(""); setSeasonYear(""); setGender(""); setPublishDate("");
     setPhotoCity(null); setPhotoCountry(null); setNotes("");
@@ -571,7 +571,7 @@ export default function IntakePage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <label style={{ ...s.ckLabel, ...(brand ? {} : { color: C.dim, cursor: "default" }) }}>
                 <input type="checkbox" checked={courtesy} disabled={!brand} style={s.ck}
-                  onChange={e => { setCourtesy(e.target.checked); if (e.target.checked) setCreditPhotog(null); }} />
+                  onChange={e => { setCourtesy(e.target.checked); if (e.target.checked) setCreditPhotogs([]); }} />
                 Courtesy of brand
               </label>
               {!brand && <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic" }}>select a brand first</span>}
@@ -591,15 +591,37 @@ export default function IntakePage() {
                 onCreateClick={(name: string) => setModal({ type: "brand", name })} />
             )}
             {!courtesy && (
-              <Typeahead label="Photographer" items={people.filter((p: any) => p.primary_role === "photographer")}
-                value={creditPhotog} onChange={(p: any) => setCreditPhotog({ ...p, credit_role: "photographer" })}
-                onClear={() => setCreditPhotog(null)}
-                onCreateClick={(name: string) => setModal({ type: "person", name, role: "photographer" })} />
+              <div style={s.field}>
+                <label style={s.label}>Photographer</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: creditPhotogs.length > 0 ? 6 : 0 }}>
+                  {creditPhotogs.map((p: any) => (
+                    <div key={p.id} style={s.chip}>
+                      <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{p.name}</span>
+                      <button onClick={() => setCreditPhotogs(prev => prev.filter(x => x.id !== p.id))} style={s.chipX}>×</button>
+                    </div>
+                  ))}
+                </div>
+                <Typeahead items={people.filter((p: any) => p.primary_role === "photographer" && !creditPhotogs.find((x: any) => x.id === p.id))}
+                  value={null} onChange={(p: any) => setCreditPhotogs(prev => [...prev, p])}
+                  onClear={() => {}} placeholder="Add photographer..."
+                  onCreateClick={(name: string) => setModal({ type: "person", name, role: "photographer" })} />
+              </div>
             )}
-            <Typeahead label="Stylist" items={people.filter((p: any) => p.primary_role === "stylist")}
-              value={creditStylist} onChange={(p: any) => setCreditStylist({ ...p, credit_role: "stylist" })}
-              onClear={() => setCreditStylist(null)}
-              onCreateClick={(name: string) => setModal({ type: "person", name, role: "stylist" })} />
+            <div style={s.field}>
+              <label style={s.label}>Stylist</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: creditStylists.length > 0 ? 6 : 0 }}>
+                {creditStylists.map((p: any) => (
+                  <div key={p.id} style={s.chip}>
+                    <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{p.name}</span>
+                    <button onClick={() => setCreditStylists(prev => prev.filter(x => x.id !== p.id))} style={s.chipX}>×</button>
+                  </div>
+                ))}
+              </div>
+              <Typeahead items={people.filter((p: any) => p.primary_role === "stylist" && !creditStylists.find((x: any) => x.id === p.id))}
+                value={null} onChange={(p: any) => setCreditStylists(prev => [...prev, p])}
+                onClear={() => {}} placeholder="Add stylist..."
+                onCreateClick={(name: string) => setModal({ type: "person", name, role: "stylist" })} />
+            </div>
           </Card>
 
           {/* CONTEXT */}
