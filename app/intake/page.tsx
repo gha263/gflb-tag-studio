@@ -143,7 +143,7 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder, onCrea
         {label && <label style={s.label}>{label}</label>}
         <div style={s.chip}>
           <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{value.name}</span>
-          <button onClick={onClear} style={s.chipX}>×</button>
+          <button onClick={onClear} tabIndex={-1} style={s.chipX}>×</button>
         </div>
       </div>
     );
@@ -158,6 +158,7 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder, onCrea
         placeholder={placeholder || (label ? `Search ${label.toLowerCase()}...` : "Search...")}
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === "Tab" || e.key === "Escape") setOpen(false); }}
       />
       {open && (filtered.length > 0 || (query.length > 1 && onCreateClick)) && (
         <div style={s.dd}>
@@ -181,7 +182,47 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder, onCrea
   );
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
+// ── Source Account Input with autocomplete ────────────────────────────────────
+
+function SourceAccountInput({ value, onChange, suggestions }: any) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const filtered = value.length > 0
+    ? suggestions.filter((s: string) => s.toLowerCase().includes(value.toLowerCase())).slice(0, 8)
+    : [];
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <input
+        style={s.input}
+        value={value}
+        placeholder="e.g. angelabritobrand"
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === "Escape") setOpen(false); }}
+      />
+      {open && filtered.length > 0 && (
+        <div style={s.dd}>
+          {filtered.map((name: string) => (
+            <div key={name} style={s.ddRow}
+              onMouseDown={() => { onChange(name); setOpen(false); }}>
+              {name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 
 function Modal({ title, onClose, onSave, saveDisabled, children }: any) {
   return (
@@ -312,7 +353,7 @@ export default function IntakePage() {
   const [isKeyLook, setIsKeyLook] = useState(false);
 
   const [brand, setBrand] = useState<any>(null);
-  const [creditCD, setCreditCD] = useState<any>(null);
+  const [creditCDs, setCreditCDs] = useState<any[]>([]);
   const [creditPhotogs, setCreditPhotogs] = useState<any[]>([]);
   const [creditStylists, setCreditStylists] = useState<any[]>([]);
   const [courtesy, setCourtesy] = useState(false);
@@ -335,6 +376,7 @@ export default function IntakePage() {
   const [events, setEvents] = useState(EVENTS_SEED);
   const [locations, setLocations] = useState(LOCATIONS_SEED);
   const [platforms, setPlatforms] = useState(PLATFORMS);
+  const [sourceNames, setSourceNames] = useState<string[]>([]);
 
   const [modal, setModal] = useState<any>(null);
   const [status, setStatus] = useState("idle");
@@ -345,18 +387,23 @@ export default function IntakePage() {
   useEffect(() => {
     async function loadEntities() {
       try {
-        const [b, p, e, l, pl] = await Promise.all([
+        const [b, p, e, l, pl, sn] = await Promise.all([
           fetch(`${SUPABASE_URL}/rest/v1/brands?select=id,name,slug&order=name`, { headers: H }).then(r => r.json()),
           fetch(`${SUPABASE_URL}/rest/v1/people?select=id,name,primary_role&order=name`, { headers: H }).then(r => r.json()),
           fetch(`${SUPABASE_URL}/rest/v1/events?select=id,name,event_type&order=name`, { headers: H }).then(r => r.json()),
           fetch(`${SUPABASE_URL}/rest/v1/locations?select=id,name,location_type,country_code&order=location_type,name`, { headers: H }).then(r => r.json()),
           fetch(`${SUPABASE_URL}/rest/v1/source_platforms?select=id,name,slug&order=name`, { headers: H }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/looks?select=source_name&not=source_name.is.null&order=source_name`, { headers: H }).then(r => r.json()),
         ]);
         if (Array.isArray(b) && b.length > 0) setBrands(b);
         if (Array.isArray(p) && p.length > 0) setPeople(p);
         if (Array.isArray(e) && e.length > 0) setEvents(e);
         if (Array.isArray(l) && l.length > 0) setLocations(l);
         if (Array.isArray(pl) && pl.length > 0) setPlatforms(pl);
+        if (Array.isArray(sn) && sn.length > 0) {
+          const unique = [...new Set(sn.map((r: any) => r.source_name?.trim()).filter(Boolean))].sort();
+          setSourceNames(unique);
+        }
       } catch (err) {
         console.error("Failed to load entities, using seed data:", err);
       }
@@ -384,12 +431,17 @@ export default function IntakePage() {
     if (b?.id && !b.id.startsWith("local-")) {
       try {
         const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/brands?id=eq.${b.id}&select=creative_director_id,people:creative_director_id(id,name,primary_role)`,
+          `${SUPABASE_URL}/rest/v1/brand_directors?brand_id=eq.${b.id}&is_current=eq.true&select=person_id,people(id,name,primary_role)`,
           { headers: H }
         );
         const rows = await res.json();
-        const person = rows?.[0]?.people;
-        if (person && !creditCD) setCreditCD({ ...person, credit_role: "creative_director" });
+        const directors = rows
+          ?.map((r: any) => r.people)
+          .filter(Boolean)
+          .filter((p: any) => !creditCDs.find((x: any) => x.id === p.id));
+        if (directors?.length > 0) {
+          setCreditCDs(prev => [...prev, ...directors]);
+        }
       } catch { /* skip */ }
     }
   }
@@ -403,7 +455,7 @@ export default function IntakePage() {
     let c; try { c = await post("people", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
     const role = modal?.role;
-    if (role === "creative_director") setCreditCD({ ...c, credit_role: "creative_director" });
+    if (role === "creative_director") setCreditCDs(prev => [...prev, c]);
     else if (role === "photographer") setCreditPhotogs(prev => [...prev, c]);
     else setCreditStylists(prev => [...prev, c]);
     setModal(null);
@@ -464,7 +516,7 @@ export default function IntakePage() {
 
       // Insert credits
       const credits = [
-        creditCD && { look_id: lookId, person_id: creditCD.id?.startsWith("local-") ? null : creditCD.id, role: "creative director" },
+        ...creditCDs.map(p => ({ look_id: lookId, person_id: p.id?.startsWith("local-") ? null : p.id, role: "creative director" })),
         ...(!courtesy ? creditPhotogs.map(p => ({ look_id: lookId, person_id: p.id?.startsWith("local-") ? null : p.id, role: "photographer" })) : []),
         ...creditStylists.map(p => ({ look_id: lookId, person_id: p.id?.startsWith("local-") ? null : p.id, role: "stylist" })),
       ].filter((c: any) => c && c.person_id);
@@ -488,7 +540,7 @@ export default function IntakePage() {
 
   function resetForm() {
     setSourceUrl(""); setCdnUrl(""); setSourceName(""); setIsKeyLook(false);
-    setBrand(null); setCreditCD(null); setCreditPhotogs([]); setCreditStylists([]); setCourtesy(false);
+    setBrand(null); setCreditCDs([]); setCreditPhotogs([]); setCreditStylists([]); setCourtesy(false);
     setIsCollab(false); setCollabBrand(null);
     setEvent(null); setScene(""); setSeasonTerm(""); setSeasonYear(""); setGender(""); setPublishDate("");
     setPhotoCity(null); setPhotoCountry(null); setNotes("");
@@ -517,9 +569,9 @@ export default function IntakePage() {
           <Card title="Source">
             <F label="Platform">
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button style={{ ...s.tog, ...(platformId === INSTAGRAM_ID && !customPlatform ? s.togOn : {}) }}
+                <button tabIndex={-1} style={{ ...s.tog, ...(platformId === INSTAGRAM_ID && !customPlatform ? s.togOn : {}) }}
                   onClick={() => { setPlatformId(INSTAGRAM_ID); setCustomPlatform(null); }}>Instagram</button>
-                <button style={{ ...s.tog, ...(platformId === BRAND_WEBSITE_ID && !customPlatform ? s.togOn : {}) }}
+                <button tabIndex={-1} style={{ ...s.tog, ...(platformId === BRAND_WEBSITE_ID && !customPlatform ? s.togOn : {}) }}
                   onClick={() => { setPlatformId(BRAND_WEBSITE_ID); setCustomPlatform(null); }}>Brand Website</button>
                 {customPlatform ? (
                   <div style={s.chip}>
@@ -548,7 +600,7 @@ export default function IntakePage() {
             </div>
             <div style={s.row2}>
               <F label="Source Account (handle only)">
-                <input style={s.input} value={sourceName} onChange={e => setSourceName(e.target.value)} placeholder="e.g. angelabritobrand" />
+                <SourceAccountInput value={sourceName} onChange={setSourceName} suggestions={sourceNames} />
               </F>
               <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 2 }}>
                 <label style={s.ckLabel}>
@@ -562,12 +614,23 @@ export default function IntakePage() {
           {/* ATTRIBUTION */}
           <Card title="Attribution">
             <Typeahead label="Brand" items={brands} value={brand}
-              onChange={selectBrand} onClear={() => { setBrand(null); setCreditCD(null); setCourtesy(false); }}
+              onChange={selectBrand} onClear={() => { setBrand(null); setCreditCDs([]); setCourtesy(false); }}
               onCreateClick={(name: string) => setModal({ type: "brand", name })} />
-            <Typeahead label="Creative Director" items={people.filter((p: any) => p.primary_role === "creative_director")}
-              value={creditCD} onChange={(p: any) => setCreditCD({ ...p, credit_role: "creative_director" })}
-              onClear={() => setCreditCD(null)}
-              onCreateClick={(name: string) => setModal({ type: "person", name, role: "creative_director" })} />
+            <div style={s.field}>
+              <label style={s.label}>Creative Director</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: creditCDs.length > 0 ? 6 : 0 }}>
+                {creditCDs.map((p: any) => (
+                  <div key={p.id} style={s.chip}>
+                    <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{p.name}</span>
+                    <button onClick={() => setCreditCDs(prev => prev.filter(x => x.id !== p.id))} tabIndex={-1} style={s.chipX}>×</button>
+                  </div>
+                ))}
+              </div>
+              <Typeahead items={people.filter((p: any) => p.primary_role === "creative_director" && !creditCDs.find((x: any) => x.id === p.id))}
+                value={null} onChange={(p: any) => setCreditCDs(prev => [...prev, p])}
+                onClear={() => {}} placeholder="Add creative director..."
+                onCreateClick={(name: string) => setModal({ type: "person", name, role: "creative_director" })} />
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <label style={{ ...s.ckLabel, ...(brand ? {} : { color: C.dim, cursor: "default" }) }}>
                 <input type="checkbox" checked={courtesy} disabled={!brand} style={s.ck}
@@ -597,7 +660,7 @@ export default function IntakePage() {
                   {creditPhotogs.map((p: any) => (
                     <div key={p.id} style={s.chip}>
                       <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{p.name}</span>
-                      <button onClick={() => setCreditPhotogs(prev => prev.filter(x => x.id !== p.id))} style={s.chipX}>×</button>
+                      <button onClick={() => setCreditPhotogs(prev => prev.filter(x => x.id !== p.id))} tabIndex={-1} style={s.chipX}>×</button>
                     </div>
                   ))}
                 </div>
@@ -613,7 +676,7 @@ export default function IntakePage() {
                 {creditStylists.map((p: any) => (
                   <div key={p.id} style={s.chip}>
                     <span style={{ fontWeight: 500, fontSize: 14, color: C.text }}>{p.name}</span>
-                    <button onClick={() => setCreditStylists(prev => prev.filter(x => x.id !== p.id))} style={s.chipX}>×</button>
+                    <button onClick={() => setCreditStylists(prev => prev.filter(x => x.id !== p.id))} tabIndex={-1} style={s.chipX}>×</button>
                   </div>
                 ))}
               </div>
