@@ -426,7 +426,7 @@ export default function FramesPage() {
       if (!ids || ids.length === 0) { setLoadingLooks(false); return; }
       const idList = ids.join(",");
       const data = await sb(
-        `looks?id=in.(${idList})&status=eq.published&select=id,cloudinary_url,season_display,scene,created_at,brand:brand_id(name)&order=created_at.desc&limit=120`
+        `looks?id=in.(${idList})&status=eq.published&select=id,cloudinary_url,season_display,scene,created_at,brand:brand_id(name)&order=created_at.desc&limit=500`
       );
       setLooks(data.map((l: any) => ({ ...l, brand_name: l.brand?.name || "" })));
     } catch (e) { console.error(e); }
@@ -695,7 +695,7 @@ export default function FramesPage() {
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em" }}>Looks in this frame</div>
                     <div style={{ fontSize: 12, color: loadingLooks ? C.dim : looks.length >= 10 ? C.green : looks.length > 0 ? C.amber : C.dim }}>
-                      {loadingLooks ? "Loading…" : `${looks.length} published`}
+                      {loadingLooks ? "Loading…" : `${looks.length} published`}{!loadingLooks && looks.length >= 10 && <span style={{ color: C.dim }}> · snapshot-ready</span>}
                     </div>
                   </div>
 
@@ -708,17 +708,17 @@ export default function FramesPage() {
                         : "No published looks match these tags yet — this is fine for a draft frame."}
                     </div>
                   ) : (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(86px, 1fr))", gap: 6 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8 }}>
                       {looks.map(look => (
-                        <div key={look.id} style={{ position: "relative", borderRadius: 8, overflow: "hidden", aspectRatio: "3/4", background: C.lift2 }}>
+                        <div key={look.id} style={{ position: "relative", borderRadius: 10, overflow: "hidden", aspectRatio: "3/4", background: C.lift2 }}>
                           <img
                             className="look-thumb"
                             src={look.cloudinary_url} alt=""
                             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                           />
-                          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "18px 5px 5px", background: "linear-gradient(transparent, rgba(0,0,0,0.8))" }}>
-                            <div style={{ fontSize: 9, color: C.white, fontWeight: 600, lineHeight: 1.3 }}>{look.brand_name}</div>
-                            {look.season_display && <div style={{ fontSize: 8, color: "rgba(255,255,255,0.5)" }}>{look.season_display}</div>}
+                          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "24px 8px 8px", background: "linear-gradient(transparent, rgba(0,0,0,0.8))" }}>
+                            <div style={{ fontSize: 11, color: C.white, fontWeight: 600, lineHeight: 1.3 }}>{look.brand_name}</div>
+                            {look.season_display && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>{look.season_display}</div>}
                           </div>
                         </div>
                       ))}
