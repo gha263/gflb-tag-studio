@@ -1,11 +1,8 @@
 "use client";
-
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
 export default function Nav() {
   const pathname = usePathname();
-
   const link = (path: string, label: string) => (
     <Link href={path} style={{
       color: pathname === path ? "#ececec" : "#8e8ea0",
@@ -23,7 +20,6 @@ export default function Nav() {
       {label}
     </Link>
   );
-
   return (
     <nav style={{
       display: "flex", alignItems: "center",
@@ -38,6 +34,7 @@ export default function Nav() {
       {link("/", "Tag Studio")}
       {link("/intake", "Intake")}
       {link("/review", "Review")}
+      {link("/frames", "Frames")}
     </nav>
   );
 }
