@@ -108,6 +108,7 @@ type Look = {
   created_at: string; brand_id: string | null; brand_name: string;
   event_id: string | null; photo_city_id: string | null; photo_country_id: string | null;
   courtesy_brand_id: string | null; collection_title: string | null; collection_description: string | null;
+  publication_id: string | null;
   credit_count: number; tag_count: number;
 };
 
@@ -125,6 +126,7 @@ export default function ReviewQueue() {
   const [people, setPeople] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
+  const [platforms, setPlatforms] = useState<any[]>([]);
 
   // Edit state — look fields
   const [editBrand, setEditBrand] = useState<any>(null);
@@ -135,6 +137,7 @@ export default function ReviewQueue() {
   const [editPublishDate, setEditPublishDate] = useState("");
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editSourceName, setEditSourceName] = useState("");
+  const [editPublication, setEditPublication] = useState<any>(null);
   const [editEvent, setEditEvent] = useState<any>(null);
   const [editPhotoCity, setEditPhotoCity] = useState<any>(null);
   const [editPhotoCountry, setEditPhotoCountry] = useState<any>(null);
@@ -155,13 +158,14 @@ export default function ReviewQueue() {
 
   const loadEntities = async () => {
     try {
-      const [b, p, e, l] = await Promise.all([
+      const [b, p, e, l, pl] = await Promise.all([
         sb("brands?select=id,name&order=name"),
         sb("people?select=id,name,primary_role&order=name"),
         sb("events?select=id,name,event_type&order=name"),
         sb("locations?select=id,name,location_type&order=location_type,name"),
+        sb("source_platforms?select=id,name,slug&order=name"),
       ]);
-      setBrands(b); setPeople(p); setEvents(e); setLocations(l);
+      setBrands(b); setPeople(p); setEvents(e); setLocations(l); setPlatforms(pl);
     } catch(e) { console.error(e); }
   };
 
@@ -175,7 +179,7 @@ export default function ReviewQueue() {
 
       const filter = statusFilter === "all" ? "" : `status=eq.${statusFilter}&`;
       const [data, tagCounts] = await Promise.all([
-        sb(`looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`),
+        sb(`looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,publication_id,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`),
         sb(`entity_tags?entity_type=eq.look&select=entity_id`),
       ]);
 
@@ -216,6 +220,7 @@ export default function ReviewQueue() {
     setEditPublishDate(look.date_published || "");
     setEditSourceUrl(look.source_url || "");
     setEditSourceName(look.source_name || "");
+    setEditPublication(look.publication_id ? platforms.find(p => p.id === look.publication_id) || null : null);
     setEditCollectionTitle(look.collection_title || "");
     setEditCollectionDesc(look.collection_description || "");
     setEditNotes(look.notes || "");
@@ -244,6 +249,7 @@ export default function ReviewQueue() {
           date_published: editPublishDate || null,
           source_url: editSourceUrl || null,
           source_name: editSourceName || null,
+          publication_id: editPublication?.id || null,
           event_id: editEvent?.id || null,
           photo_city_id: editPhotoCity?.id || null,
           photo_country_id: editPhotoCountry?.id || null,
@@ -550,6 +556,10 @@ export default function ReviewQueue() {
 
                   <F label="Source Account" span2>
                     <input value={editSourceName} onChange={e => setEditSourceName(e.target.value)} placeholder="@account_handle" style={inp} />
+                  </F>
+
+                  <F label="Publication" span2>
+                    <Typeahead items={platforms} value={editPublication} onChange={setEditPublication} onClear={() => setEditPublication(null)} placeholder="e.g. Vogue, i-D, Dazed..." />
                   </F>
 
                   {/* COLLECTION */}
