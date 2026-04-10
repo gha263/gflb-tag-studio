@@ -330,10 +330,14 @@ function CreateLocationModal({ initialName, type, locations, onSave, onClose }: 
 function CreatePlatformModal({ initialName, onSave, onClose }: any) {
   const [name, setName] = useState(initialName || "");
   const [url, setUrl] = useState("");
+  const [website, setWebsite] = useState("");
+  const [ig, setIg] = useState("");
   return (
-    <Modal title="New Platform" onClose={onClose} saveDisabled={!name.trim()}
-      onSave={() => onSave({ name: name.trim(), base_url: url || null, slug: slugify(name) })}>
+    <Modal title="New Publication / Platform" onClose={onClose} saveDisabled={!name.trim()}
+      onSave={() => onSave({ name: name.trim(), base_url: url || null, website: website || null, instagram_handle: ig || null, slug: slugify(name) })}>
       <F label="Name *"><input style={s.input} value={name} onChange={e => setName(e.target.value)} autoFocus /></F>
+      <F label="Website"><input style={s.input} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://vogue.com" /></F>
+      <F label="Instagram Handle"><input style={s.input} value={ig} onChange={e => setIg(e.target.value)} placeholder="@vogue" /></F>
       <F label="Base URL"><input style={s.input} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://..." /></F>
     </Modal>
   );
@@ -347,6 +351,7 @@ const BRAND_WEBSITE_ID = "f003e6ff-7e20-459e-85c8-95d2bdc666c7";
 export default function IntakePage() {
   const [platformId, setPlatformId] = useState(INSTAGRAM_ID);
   const [customPlatform, setCustomPlatform] = useState<any>(null);
+  const [publication, setPublication] = useState<any>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [cdnUrl, setCdnUrl] = useState("");
   const [sourceName, setSourceName] = useState("");
@@ -488,6 +493,7 @@ export default function IntakePage() {
       source_cdn_url: cdnUrl.trim(),
       source_name: sourceName.trim() || null,
       source_platform_id: pid,
+      publication_id: publication?.id?.startsWith("local-") ? null : (publication?.id || null),
       brand_id: brand?.id?.startsWith("local-") ? null : (brand?.id || null),
       courtesy_brand_id: courtesy ? (brand?.id?.startsWith("local-") ? null : brand?.id || null) : null,
       event_id: event?.id?.startsWith("local-") ? null : (event?.id || null),
@@ -544,7 +550,7 @@ export default function IntakePage() {
     setIsCollab(false); setCollabBrand(null);
     setEvent(null); setScene(""); setSeasonTerm(""); setSeasonYear(""); setGender(""); setPublishDate("");
     setPhotoCity(null); setPhotoCountry(null); setNotes("");
-    setPlatformId(INSTAGRAM_ID); setCustomPlatform(null);
+    setPlatformId(INSTAGRAM_ID); setCustomPlatform(null); setPublication(null);
     setTimeout(() => setStatus("idle"), 3000);
   }
 
@@ -609,6 +615,9 @@ export default function IntakePage() {
                 </label>
               </div>
             </div>
+            <Typeahead label="Publication" items={platforms.filter((p: any) => p.id !== INSTAGRAM_ID && p.id !== BRAND_WEBSITE_ID)}
+              value={publication} onChange={setPublication} onClear={() => setPublication(null)}
+              placeholder="e.g. Vogue, i-D, Dazed..." />
           </Card>
 
           {/* ATTRIBUTION */}
