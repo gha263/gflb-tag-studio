@@ -211,8 +211,7 @@ function LookCountPreview({ tags }: { tags: any[] }) {
         if ((ids || []).length === 0) break;
       }
       if (!ids || ids.length === 0) { setCount(0); setLoading(false); return; }
-      const filter = ids.map(id => `id=eq.${id}`).join(",");
-      const published = await sb(`looks?or=(${filter})&status=eq.published&select=id`);
+      const published = await sb(`looks?id=in.(${ids.join(",")})&status=eq.published&select=id`);
       setCount(published.length);
     } catch { setCount(null); }
     setLoading(false);
@@ -425,9 +424,9 @@ export default function FramesPage() {
         if ((ids || []).length === 0) break;
       }
       if (!ids || ids.length === 0) { setLoadingLooks(false); return; }
-      const filter = ids.map((id: string) => `id=eq.${id}`).join(",");
+      const idList = ids.join(",");
       const data = await sb(
-        `looks?or=(${filter})&status=eq.published&select=id,cloudinary_url,season_display,scene,created_at,brand:brand_id(name)&order=created_at.desc&limit=120`
+        `looks?id=in.(${idList})&status=eq.published&select=id,cloudinary_url,season_display,scene,created_at,brand:brand_id(name)&order=created_at.desc&limit=120`
       );
       setLooks(data.map((l: any) => ({ ...l, brand_name: l.brand?.name || "" })));
     } catch (e) { console.error(e); }
