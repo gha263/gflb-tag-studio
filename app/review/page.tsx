@@ -29,7 +29,7 @@ const C = {
 
 // ── Mini Typeahead ─────────────────────────────────────────────────────────────
 
-function Typeahead({ label, items, value, onChange, onClear, placeholder }: any) {
+function Typeahead({ label, items, value, onChange, onClear, placeholder, onCreateClick }: any) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -47,7 +47,7 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder }: any)
   if (value) return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "8px 12px" }}>
       <span style={{ flex: 1, fontSize: 13, color: C.text }}>{value.name}</span>
-      <button onClick={onClear} style={{ background: "none", border: "none", color: C.muted, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+      <button tabIndex={-1} onClick={onClear} style={{ background: "none", border: "none", color: C.muted, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
     </div>
   );
 
@@ -58,9 +58,10 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder }: any)
         placeholder={placeholder || `Search ${label?.toLowerCase() || ""}...`}
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === "Tab" || e.key === "Escape") setOpen(false); }}
         style={{ background: C.lift3, border: "none", color: C.text, padding: "8px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box", fontFamily: "Inter,sans-serif" }}
       />
-      {open && filtered.length > 0 && (
+      {open && (filtered.length > 0 || (query.length > 1 && onCreateClick)) && (
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.lift2, borderRadius: 10, zIndex: 300, marginTop: 3, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", maxHeight: 200, overflowY: "auto" }}>
           {filtered.map((item: any) => (
             <div key={item.id} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: C.text, borderBottom: `1px solid ${C.lift1}` }}
@@ -70,8 +71,111 @@ function Typeahead({ label, items, value, onChange, onClear, placeholder }: any)
               {item.location_type && <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>{item.location_type}</span>}
             </div>
           ))}
+          {query.length > 1 && onCreateClick && !filtered.find((i: any) => i.name.toLowerCase() === query.toLowerCase()) && (
+            <div onMouseDown={() => { onCreateClick(query); setQuery(""); setOpen(false); }}
+              style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "#4a9eff", fontWeight: 500 }}>
+              + Create "{query}"
+            </div>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Multi-person credit field ──────────────────────────────────────────────────
+
+function MultiCredit({ label, people, role, values, onChange, onCreateClick }: any) {
+  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "8px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {values.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {values.map((p: any) => (
+            <div key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "5px 10px", fontSize: 13 }}>
+              <span style={{ color: "#ececec", fontWeight: 500 }}>{p.name}</span>
+              <button tabIndex={-1} onClick={() => onChange(values.filter((x: any) => x.id !== p.id))}
+                style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <Typeahead
+        items={people.filter((p: any) => p.primary_role === role && !values.find((v: any) => v.id === p.id))}
+        value={null}
+        onChange={(p: any) => onChange([...values, p])}
+        onClear={() => {}}
+        placeholder={`Add ${label.toLowerCase()}...`}
+        onCreateClick={onCreateClick}
+      />
+    </div>
+  );
+}
+
+// ── Create person modal ────────────────────────────────────────────────────────
+
+function CreatePersonModal({ initialName, role, onSave, onClose }: any) {
+  const [name, setName] = useState(initialName || "");
+  const [primaryRole, setPrimaryRole] = useState(role || "creative_director");
+  const [ig, setIg] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      const result = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ name: name.trim(), slug: slugify(name), primary_role: primaryRole, instagram_handle: ig.trim() || null }),
+      });
+      if (!result.ok) throw new Error(await result.text());
+      const [created] = await result.json();
+      onSave(created);
+    } catch (e: any) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "9px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.lift2}` }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#ececec" }}>New Person</span>
+          <button tabIndex={-1} onClick={onClose} style={{ background: "none", border: "none", color: C.muted, fontSize: 22, cursor: "pointer", padding: 0 }}>×</button>
+        </div>
+        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Name *</label>
+            <input value={name} onChange={e => setName(e.target.value)} autoFocus style={inp2} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Role</label>
+            <select value={primaryRole} onChange={e => setPrimaryRole(e.target.value)} style={{ ...inp2, cursor: "pointer" }}>
+              <option value="creative_director">Creative Director</option>
+              <option value="photographer">Photographer</option>
+              <option value="stylist">Stylist</option>
+              <option value="model">Model</option>
+              <option value="journalist">Journalist</option>
+              <option value="makeup_artist">Makeup Artist</option>
+              <option value="casting_director">Casting Director</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Instagram Handle</label>
+            <input value={ig} onChange={e => setIg(e.target.value)} placeholder="@handle" style={inp2} />
+          </div>
+        </div>
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button tabIndex={-1} onClick={onClose} style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ background: "#ececec", border: "none", color: "#212121", padding: "8px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving || !name.trim() ? 0.4 : 1 }}>
+            {saving ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -147,11 +251,14 @@ export default function ReviewQueue() {
   const [editKeyLook, setEditKeyLook] = useState(false);
   const [editCourtesy, setEditCourtesy] = useState(false);
 
-  // Edit state — credits
+  // Edit state — credits (multi-person)
   const [existingCredits, setExistingCredits] = useState<any[]>([]);
-  const [editCD, setEditCD] = useState<any>(null);
-  const [editPhotog, setEditPhotog] = useState<any>(null);
-  const [editStylist, setEditStylist] = useState<any>(null);
+  const [editCDs, setEditCDs] = useState<any[]>([]);
+  const [editPhotogs, setEditPhotogs] = useState<any[]>([]);
+  const [editStylists, setEditStylists] = useState<any[]>([]);
+
+  // Create person modal
+  const [createPersonModal, setCreatePersonModal] = useState<{name: string; role: string} | null>(null);
 
   useEffect(() => { loadEntities(); }, []);
   useEffect(() => { loadLooks(); }, [statusFilter]);
@@ -202,12 +309,9 @@ export default function ReviewQueue() {
   const loadCredits = async (lookId: string) => {
     const credits = await sb(`look_credits?look_id=eq.${lookId}&select=id,role,person_id,people(id,name,primary_role)`);
     setExistingCredits(credits || []);
-    const cd = credits?.find((c: any) => c.role === "creative director");
-    const ph = credits?.find((c: any) => c.role === "photographer");
-    const st = credits?.find((c: any) => c.role === "stylist");
-    setEditCD(cd?.people || null);
-    setEditPhotog(ph?.people || null);
-    setEditStylist(st?.people || null);
+    setEditCDs(credits?.filter((c: any) => c.role === "creative director").map((c: any) => c.people).filter(Boolean) || []);
+    setEditPhotogs(credits?.filter((c: any) => c.role === "photographer").map((c: any) => c.people).filter(Boolean) || []);
+    setEditStylists(credits?.filter((c: any) => c.role === "stylist").map((c: any) => c.people).filter(Boolean) || []);
   };
 
   const selectLook = (look: Look) => {
@@ -264,10 +368,10 @@ export default function ReviewQueue() {
       // Save credits — delete existing, reinsert
       await sb(`look_credits?look_id=eq.${selected.id}`, { method: "DELETE", prefer: "" });
       const newCredits = [
-        editCD && { look_id: selected.id, person_id: editCD.id, role: "creative director" },
-        !editCourtesy && editPhotog && { look_id: selected.id, person_id: editPhotog.id, role: "photographer" },
-        editStylist && { look_id: selected.id, person_id: editStylist.id, role: "stylist" },
-      ].filter(Boolean);
+        ...editCDs.map(p => ({ look_id: selected.id, person_id: p.id, role: "creative director" })),
+        ...(!editCourtesy ? editPhotogs.map(p => ({ look_id: selected.id, person_id: p.id, role: "photographer" })) : []),
+        ...editStylists.map(p => ({ look_id: selected.id, person_id: p.id, role: "stylist" })),
+      ].filter(c => c.person_id);
       if (newCredits.length > 0) {
         await sb("look_credits", { method: "POST", body: JSON.stringify(newCredits) });
       }
@@ -459,12 +563,24 @@ export default function ReviewQueue() {
                   </F>
 
                   <F label="Creative Director" span2>
-                    <Typeahead items={people.filter((p:any) => p.primary_role==="creative_director")} value={editCD} onChange={setEditCD} onClear={() => setEditCD(null)} placeholder="Search creative director..." />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {editCDs.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {editCDs.map((p: any) => (
+                            <div key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "5px 10px", fontSize: 13 }}>
+                              <span style={{ color: C.text, fontWeight: 500 }}>{p.name}</span>
+                              <button tabIndex={-1} onClick={() => setEditCDs(editCDs.filter((x:any) => x.id !== p.id))} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <Typeahead items={people.filter((p:any) => p.primary_role==="creative_director" && !editCDs.find((x:any) => x.id===p.id))} value={null} onChange={(p:any) => setEditCDs([...editCDs, p])} onClear={() => {}} placeholder="Add creative director..." onCreateClick={(name:string) => setCreatePersonModal({name, role:"creative_director"})} />
+                    </div>
                   </F>
 
                   <F label="" span2>
                     <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: editBrand?"pointer":"default", fontSize: 13, color: editBrand ? C.text : C.dim, userSelect: "none" }}>
-                      <input type="checkbox" checked={editCourtesy} disabled={!editBrand} onChange={e => { setEditCourtesy(e.target.checked); if(e.target.checked) setEditPhotog(null); }} style={{ accentColor: C.white, cursor: "pointer" }} />
+                      <input type="checkbox" checked={editCourtesy} disabled={!editBrand} onChange={e => { setEditCourtesy(e.target.checked); if(e.target.checked) setEditPhotogs([]); }} style={{ accentColor: C.white, cursor: "pointer" }} />
                       Courtesy of brand
                       {!editBrand && <span style={{ fontSize: 11, color: C.dim, fontStyle: "italic" }}>— select a brand first</span>}
                     </label>
@@ -472,12 +588,36 @@ export default function ReviewQueue() {
 
                   {!editCourtesy && (
                     <F label="Photographer" span2>
-                      <Typeahead items={people.filter((p:any) => p.primary_role==="photographer")} value={editPhotog} onChange={setEditPhotog} onClear={() => setEditPhotog(null)} placeholder="Search photographer..." />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {editPhotogs.length > 0 && (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {editPhotogs.map((p: any) => (
+                              <div key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "5px 10px", fontSize: 13 }}>
+                                <span style={{ color: C.text, fontWeight: 500 }}>{p.name}</span>
+                                <button tabIndex={-1} onClick={() => setEditPhotogs(editPhotogs.filter((x:any) => x.id !== p.id))} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <Typeahead items={people.filter((p:any) => p.primary_role==="photographer" && !editPhotogs.find((x:any) => x.id===p.id))} value={null} onChange={(p:any) => setEditPhotogs([...editPhotogs, p])} onClear={() => {}} placeholder="Add photographer..." onCreateClick={(name:string) => setCreatePersonModal({name, role:"photographer"})} />
+                      </div>
                     </F>
                   )}
 
                   <F label="Stylist" span2>
-                    <Typeahead items={people.filter((p:any) => p.primary_role==="stylist")} value={editStylist} onChange={setEditStylist} onClear={() => setEditStylist(null)} placeholder="Search stylist..." />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {editStylists.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {editStylists.map((p: any) => (
+                            <div key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "5px 10px", fontSize: 13 }}>
+                              <span style={{ color: C.text, fontWeight: 500 }}>{p.name}</span>
+                              <button tabIndex={-1} onClick={() => setEditStylists(editStylists.filter((x:any) => x.id !== p.id))} style={{ background: "none", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <Typeahead items={people.filter((p:any) => p.primary_role==="stylist" && !editStylists.find((x:any) => x.id===p.id))} value={null} onChange={(p:any) => setEditStylists([...editStylists, p])} onClear={() => {}} placeholder="Add stylist..." onCreateClick={(name:string) => setCreatePersonModal({name, role:"stylist"})} />
+                    </div>
                   </F>
 
                   {/* CONTEXT */}
@@ -619,6 +759,21 @@ export default function ReviewQueue() {
           )}
         </div>
       </div>
+
+      {createPersonModal && (
+        <CreatePersonModal
+          initialName={createPersonModal.name}
+          role={createPersonModal.role}
+          onClose={() => setCreatePersonModal(null)}
+          onSave={async (created: any) => {
+            setPeople(prev => [...prev, created]);
+            if (createPersonModal.role === "creative_director") setEditCDs(prev => [...prev, created]);
+            else if (createPersonModal.role === "photographer") setEditPhotogs(prev => [...prev, created]);
+            else if (createPersonModal.role === "stylist") setEditStylists(prev => [...prev, created]);
+            setCreatePersonModal(null);
+          }}
+        />
+      )}
     </>
   );
 }
