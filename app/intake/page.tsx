@@ -482,6 +482,12 @@ export default function IntakePage() {
     setCustomPlatform(c); setPlatformId(""); setModal(null);
   }
 
+  async function handleCreatePublication(data: any) {
+    let c; try { c = await post("source_platforms", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
+    setPlatforms(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
+    setPublication(c); setModal(null);
+  }
+
   // ── Submit ────────────────────────────────────────────────────────────────
   async function handleSubmit() {
     if (!cdnUrl.trim()) { setStatus("error"); setErrorMsg("CDN image URL is required."); return; }
@@ -617,7 +623,8 @@ export default function IntakePage() {
             </div>
             <Typeahead label="Publication" items={platforms.filter((p: any) => p.id !== INSTAGRAM_ID && p.id !== BRAND_WEBSITE_ID)}
               value={publication} onChange={setPublication} onClear={() => setPublication(null)}
-              placeholder="e.g. Vogue, i-D, Dazed..." />
+              placeholder="e.g. Vogue, i-D, Dazed..."
+              onCreateClick={(name: string) => setModal({ type: "publication", name })} />
           </Card>
 
           {/* ATTRIBUTION */}
@@ -784,6 +791,7 @@ export default function IntakePage() {
         {modal?.type === "city" && <CreateLocationModal initialName={modal.name} type="city" locations={locations} onSave={handleCreateLocation} onClose={() => setModal(null)} />}
         {modal?.type === "country" && <CreateLocationModal initialName={modal.name} type="country" locations={locations} onSave={handleCreateLocation} onClose={() => setModal(null)} />}
         {modal?.type === "platform" && <CreatePlatformModal initialName={modal.name} onSave={handleCreatePlatform} onClose={() => setModal(null)} />}
+        {modal?.type === "publication" && <CreatePlatformModal initialName={modal.name} onSave={handleCreatePublication} onClose={() => setModal(null)} />}
       </div>
     </>
   );
