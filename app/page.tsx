@@ -23,6 +23,7 @@ const sb = async (path: string, opts: any = {}) => {
 
 const TAG_TYPE_ORDER = [
   "garment types","silouhettes","length",
+  "design_language",
   "color","color intensity","color complexity","color palette",
   "materials","patterns","pattern-scale","surface texture",
   "techniques","construction",
@@ -30,6 +31,7 @@ const TAG_TYPE_ORDER = [
 
 const TYPE_LABELS: {[key: string]: string} = {
   "garment types":"Garment","silouhettes":"Silhouette","length":"Length",
+  "design_language":"Design Language",
   "color":"Color","color intensity":"Intensity","color complexity":"Complexity","color palette":"Palette",
   "materials":"Material","patterns":"Pattern","pattern-scale":"Scale",
   "surface texture":"Texture","techniques":"Technique","construction":"Construction",
