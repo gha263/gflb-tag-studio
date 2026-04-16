@@ -59,6 +59,7 @@ export default function TagStudio() {
   const [tagsByType, setTagsByType] = useState<Record<string,any[]>>({});
   const [idx, setIdx] = useState(0);
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [primaryTagId, setPrimaryTagId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -125,8 +126,10 @@ export default function TagStudio() {
   };
 
   const loadTags = async (lookId: string) => {
-    const data = await sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&source=eq.human&select=tag_id`);
+    const data = await sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&source=eq.human&select=tag_id,is_primary`);
     setActiveTags(new Set(data.map((t: any) => t.tag_id)));
+    const primary = data.find((t: any) => t.is_primary);
+    setPrimaryTagId(primary?.tag_id || null);
   };
 
   const toggleTag = async (tagId: string) => {
@@ -137,6 +140,7 @@ export default function TagStudio() {
     try {
       if (next.has(tagId)) {
         next.delete(tagId);
+        if (primaryTagId === tagId) setPrimaryTagId(null);
         await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, { method:"DELETE", prefer:"" });
       } else {
         next.add(tagId);
@@ -147,7 +151,30 @@ export default function TagStudio() {
     setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
   };
 
-  const saveNotes = async () => {
+  const setPrimary = async (tagId: string) => {
+    const look = filtered[idx];
+    if (!look) return;
+    setSaving(true);
+    try {
+      // Clear existing primary on this look
+      await sb(`entity_tags?entity_id=eq.${look.id}&entity_type=eq.look&source=eq.human&is_primary=eq.true`, {
+        method: "PATCH", prefer: "",
+        body: JSON.stringify({ is_primary: false }),
+      });
+      // If clicking the already-primary tag, just clear it
+      if (primaryTagId === tagId) {
+        setPrimaryTagId(null);
+      } else {
+        // Set new primary
+        await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, {
+          method: "PATCH", prefer: "",
+          body: JSON.stringify({ is_primary: true }),
+        });
+        setPrimaryTagId(tagId);
+      }
+    } catch(e) { console.error(e); }
+    setSaving(false);
+  };
     const look = filtered[idx];
     if (!look) return;
     setSavingNotes(true);
@@ -341,28 +368,50 @@ export default function TagStudio() {
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                   {(tagsByType[type]||[]).map(tag => {
                     const on = activeTags.has(tag.id);
+                    const isColor = type === "color";
+                    const isPrimary = primaryTagId === tag.id;
                     return (
-                      <button
-                        key={tag.id}
-                        className={`tag-btn${on?" on":""}`}
-                        onClick={() => toggleTag(tag.id)}
-                        title={tag.definition || undefined}
-                        style={{
-                          background: on ? C.white : C.lift1,
-                          border: "none",
-                          color: on ? "#212121" : C.text,
-                          padding:"6px 14px",
-                          fontSize:13,
-                          fontWeight: on ? 600 : 400,
-                          cursor:"pointer",
-                          borderRadius:20,
-                          fontFamily:"Inter,sans-serif",
-                          transition:"all 0.1s",
-                          textDecoration: tag.definition ? "underline dotted" : "none",
-                          textUnderlineOffset: 3,
-                        }}>
-                        {tag.name}{on ? " ✓" : ""}
-                      </button>
+                      <div key={tag.id} style={{ display: "inline-flex", alignItems: "center", gap: 0 }}>
+                        {isColor && on && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setPrimary(tag.id); }}
+                            title={isPrimary ? "Primary color — click to clear" : "Set as primary color"}
+                            style={{
+                              background: isPrimary ? "#f0a500" : C.lift2,
+                              border: "none",
+                              color: isPrimary ? "#212121" : C.muted,
+                              padding: "6px 8px 6px 10px",
+                              fontSize: 12,
+                              cursor: "pointer",
+                              borderRadius: "20px 0 0 20px",
+                              fontFamily: "Inter,sans-serif",
+                              lineHeight: 1,
+                              transition: "all 0.1s",
+                            }}>
+                            {isPrimary ? "★" : "☆"}
+                          </button>
+                        )}
+                        <button
+                          className={`tag-btn${on?" on":""}`}
+                          onClick={() => toggleTag(tag.id)}
+                          title={tag.definition || undefined}
+                          style={{
+                            background: on ? C.white : C.lift1,
+                            border: "none",
+                            color: on ? "#212121" : C.text,
+                            padding: "6px 14px",
+                            fontSize: 13,
+                            fontWeight: on ? 600 : 400,
+                            cursor: "pointer",
+                            borderRadius: isColor && on ? "0 20px 20px 0" : 20,
+                            fontFamily: "Inter,sans-serif",
+                            transition: "all 0.1s",
+                            textDecoration: tag.definition ? "underline dotted" : "none",
+                            textUnderlineOffset: 3,
+                          }}>
+                          {tag.name}{on && !isColor ? " ✓" : ""}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
