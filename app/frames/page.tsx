@@ -205,7 +205,11 @@ function LookCountPreview({ tags }: { tags: any[] }) {
     try {
       let ids: string[] | null = null;
       for (const tag of tags) {
-        const rows = await sb(`entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&select=entity_id`);
+        const isColor = tag.tag_type === "color";
+        const filter = isColor
+          ? `entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&is_primary=eq.true&select=entity_id`
+          : `entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&select=entity_id`;
+        const rows = await sb(filter);
         const tagIds = rows.map((r: any) => r.entity_id);
         ids = ids === null ? tagIds : ids.filter((id: string) => new Set(tagIds).has(id));
         if ((ids || []).length === 0) break;
@@ -418,7 +422,11 @@ export default function FramesPage() {
       if (tags.length === 0) { setLoadingLooks(false); return; }
       let ids: string[] | null = null;
       for (const tag of tags) {
-        const rows = await sb(`entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&select=entity_id`);
+        const isColor = tag.tag_type === "color";
+        const filter = isColor
+          ? `entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&is_primary=eq.true&select=entity_id`
+          : `entity_tags?tag_id=eq.${tag.id}&entity_type=eq.look&select=entity_id`;
+        const rows = await sb(filter);
         const tagIds = rows.map((r: any) => r.entity_id);
         ids = ids === null ? tagIds : ids.filter((id: string) => new Set(tagIds).has(id));
         if ((ids || []).length === 0) break;
