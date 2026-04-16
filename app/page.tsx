@@ -175,6 +175,8 @@ export default function TagStudio() {
     } catch(e) { console.error(e); }
     setSaving(false);
   };
+
+  const saveNotes = async () => {
     const look = filtered[idx];
     if (!look) return;
     setSavingNotes(true);
