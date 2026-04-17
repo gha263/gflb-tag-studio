@@ -64,6 +64,8 @@ export default function TagStudio() {
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
+  const [tagFilter, setTagFilter] = useState("all");
+  const [lookTagsMap, setLookTagsMap] = useState<Record<string, string[]>>({});
   const [jumpInput, setJumpInput] = useState("");
   const [filtered, setFiltered] = useState<any[]>([]);
   const [newName, setNewName] = useState("");
@@ -78,10 +80,10 @@ export default function TagStudio() {
   useEffect(() => { loadData(); }, []);
 
   useEffect(() => {
-    const f = brandFilter === "all" ? looks : looks.filter(l => l.brand_id === brandFilter);
+    let f = brandFilter === "all" ? looks : looks.filter(l => l.brand_id === brandFilter);
+    if (tagFilter !== "all") f = f.filter(l => (lookTagsMap[l.id] || []).includes(tagFilter));
     setFiltered(f);
-    // Only reset to 0 when brand filter actively changes, not on initial load
-  }, [brandFilter, looks]);
+  }, [brandFilter, tagFilter, looks, lookTagsMap]);
 
   // Persist position
   useEffect(() => { try { localStorage.setItem("ts_idx", String(idx)); } catch {} }, [idx]);
@@ -100,6 +102,7 @@ export default function TagStudio() {
   const prev = useCallback(() => { if (idx > 0) setIdx(i => i - 1); }, [idx]);
 
   const handleBrandFilter = (val: string) => { setBrandFilter(val); setIdx(0); };
+  const handleTagFilter = (val: string) => { setTagFilter(val); setIdx(0); };
 
   const handleJump = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
@@ -121,21 +124,28 @@ export default function TagStudio() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [l, b, t] = await Promise.all([
+      const [l, b, t, et] = await Promise.all([
         sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
+        sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id,tag_id&limit=10000"),
       ]);
       const brandMap: Record<string,string> = {};
       b.forEach((br: any) => { brandMap[br.id] = br.name; });
       const looksWithBrand = l.map((look: any) => ({ ...look, brands: { name: brandMap[look.brand_id] || "" } }));
+      // Build lookId → [tagIds] map
+      const tagMap: Record<string, string[]> = {};
+      et.forEach((row: any) => {
+        if (!tagMap[row.entity_id]) tagMap[row.entity_id] = [];
+        tagMap[row.entity_id].push(row.tag_id);
+      });
       const usable = t.filter((t: any) => !EXCLUDED.includes(t.tag_type));
       const grouped = usable.reduce((acc: Record<string,any[]>, tag: any) => {
         if (!acc[tag.tag_type]) acc[tag.tag_type] = [];
         acc[tag.tag_type].push(tag);
         return acc;
       }, {});
-      setLooks(looksWithBrand); setFiltered(looksWithBrand); setBrands(b); setTagsByType(grouped);
+      setLooks(looksWithBrand); setFiltered(looksWithBrand); setBrands(b); setTagsByType(grouped); setLookTagsMap(tagMap);
     } catch(e) { console.error(e); }
     setLoading(false);
   };
@@ -157,9 +167,11 @@ export default function TagStudio() {
         next.delete(tagId);
         if (primaryTagId === tagId) setPrimaryTagId(null);
         await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, { method:"DELETE", prefer:"" });
+        setLookTagsMap(prev => ({ ...prev, [look.id]: (prev[look.id] || []).filter(id => id !== tagId) }));
       } else {
         next.add(tagId);
         await sb("entity_tags", { method:"POST", body: JSON.stringify({ entity_id:look.id, entity_type:"look", tag_id:tagId, source:"human", model:null }), prefer:"resolution=merge-duplicates" });
+        setLookTagsMap(prev => ({ ...prev, [look.id]: [...(prev[look.id] || []), tagId] }));
       }
       setActiveTags(next);
     } catch(e) { console.error(e); }
@@ -273,6 +285,21 @@ export default function TagStudio() {
             style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
             <option value="all">All Brands</option>
             {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+
+          {/* Tag filter */}
+          <select
+            value={tagFilter}
+            onChange={e => handleTagFilter(e.target.value)}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
+            <option value="all">All Tags</option>
+            {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => (
+              <optgroup key={type} label={TYPE_LABELS[type] || type}>
+                {(tagsByType[type] || []).map((tag: any) => (
+                  <option key={tag.id} value={tag.id}>{tag.name}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
 
           {/* Jump to look */}
