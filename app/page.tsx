@@ -57,13 +57,14 @@ export default function TagStudio() {
   const [looks, setLooks] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
   const [tagsByType, setTagsByType] = useState<Record<string,any[]>>({});
-  const [idx, setIdx] = useState(0);
+  const [idx, setIdx] = useState(() => { try { return parseInt(localStorage.getItem("ts_idx") || "0") || 0; } catch { return 0; } });
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [primaryTagId, setPrimaryTagId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [brandFilter, setBrandFilter] = useState("all");
+  const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
+  const [jumpInput, setJumpInput] = useState("");
   const [filtered, setFiltered] = useState<any[]>([]);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("");
@@ -78,8 +79,13 @@ export default function TagStudio() {
 
   useEffect(() => {
     const f = brandFilter === "all" ? looks : looks.filter(l => l.brand_id === brandFilter);
-    setFiltered(f); setIdx(0);
+    setFiltered(f);
+    // Only reset to 0 when brand filter actively changes, not on initial load
   }, [brandFilter, looks]);
+
+  // Persist position
+  useEffect(() => { try { localStorage.setItem("ts_idx", String(idx)); } catch {} }, [idx]);
+  useEffect(() => { try { localStorage.setItem("ts_brand", brandFilter); } catch {} }, [brandFilter]);
 
   useEffect(() => {
     if (filtered[idx]) {
@@ -92,6 +98,15 @@ export default function TagStudio() {
 
   const next = useCallback(() => { if (idx < filtered.length - 1) setIdx(i => i + 1); }, [idx, filtered.length]);
   const prev = useCallback(() => { if (idx > 0) setIdx(i => i - 1); }, [idx]);
+
+  const handleBrandFilter = (val: string) => { setBrandFilter(val); setIdx(0); };
+
+  const handleJump = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const n = parseInt(jumpInput) - 1;
+    if (!isNaN(n) && n >= 0 && n < filtered.length) setIdx(n);
+    setJumpInput("");
+  };
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
@@ -254,11 +269,20 @@ export default function TagStudio() {
           {/* Brand filter */}
           <select
             value={brandFilter}
-            onChange={e => setBrandFilter(e.target.value)}
+            onChange={e => handleBrandFilter(e.target.value)}
             style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
             <option value="all">All Brands</option>
             {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
+
+          {/* Jump to look */}
+          <input
+            value={jumpInput}
+            onChange={e => setJumpInput(e.target.value)}
+            onKeyDown={handleJump}
+            placeholder="Go to #"
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",fontFamily:"Inter,sans-serif",width:80,textAlign:"center"}}
+          />
 
           {/* Save indicator */}
           <span style={{fontSize:12,color:flash&&!saving?C.green:C.muted,opacity:saving||flash?1:0,transition:"opacity 0.3s",minWidth:60,textAlign:"right",fontWeight:500}}>
