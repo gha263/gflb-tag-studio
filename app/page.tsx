@@ -707,7 +707,7 @@ export default function TagStudio() {
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
