@@ -22,22 +22,26 @@ const sb = async (path: string, opts: any = {}) => {
 };
 
 const TAG_TYPE_ORDER = [
-  "garment types","silouhettes","length",
+  "color",
+  "form",
+  "craft",
+  "pattern",
   "design_language",
-  "color","color intensity","color complexity","color palette",
-  "materials","patterns","pattern-scale","surface texture",
-  "techniques","construction",
+  "mood",
+  "garment_types",
 ];
 
 const TYPE_LABELS: {[key: string]: string} = {
-  "garment types":"Garment","silouhettes":"Silhouette","length":"Length",
-  "design_language":"Design Language",
-  "color":"Color","color intensity":"Intensity","color complexity":"Complexity","color palette":"Palette",
-  "materials":"Material","patterns":"Pattern","pattern-scale":"Scale",
-  "surface texture":"Texture","techniques":"Technique","construction":"Construction",
+  "color":           "Color",
+  "form":            "Form",
+  "craft":           "Craft",
+  "pattern":         "Pattern",
+  "design_language": "Design Language",
+  "mood":            "Mood",
+  "garment_types":   "Garment",
 };
 
-const EXCLUDED = ["brand","season","event"];
+const EXCLUDED = ["brand","season","event","brand_category","brand_production","event_format"];
 
 // ── ChatGPT palette ────────────────────────────────────────────────────────────
 const C = {
@@ -490,7 +494,6 @@ export default function TagStudio() {
                     style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
                     <option value="">Select type…</option>
                     {orderedTypes.map(t => <option key={t} value={t}>{TYPE_LABELS[t]||t}</option>)}
-                    <option value="cultural">Cultural</option>
                   </select>
                   <div style={{display:"flex",gap:8}}>
                     <button onClick={addTag} disabled={adding}
