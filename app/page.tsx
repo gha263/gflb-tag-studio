@@ -81,6 +81,12 @@ export default function TagStudio() {
   const [editingNotes, setEditingNotes] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
 
+  // ── Browse mode ──────────────────────────────────────────────────────────────
+  const [browseMode, setBrowseMode] = useState(false);
+  const [browseTagIds, setBrowseTagIds] = useState<Set<string>>(new Set());
+  const [browseScrollPos, setBrowseScrollPos] = useState(0);
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["color"]));
+
   useEffect(() => { loadData(); }, []);
 
   useEffect(() => {
@@ -113,6 +119,62 @@ export default function TagStudio() {
     const n = parseInt(jumpInput) - 1;
     if (!isNaN(n) && n >= 0 && n < filtered.length) setIdx(n);
     setJumpInput("");
+  };
+
+  // ── Browse mode helpers ──────────────────────────────────────────────────────
+  const toggleBrowseTag = (tagId: string) => {
+    setBrowseTagIds(prev => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId); else next.add(tagId);
+      return next;
+    });
+  };
+
+  const toggleExpandedType = (type: string) => {
+    setExpandedTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
+
+  // Count how many looks have each tag
+  const tagCountMap = Object.fromEntries(
+    Object.values(tagsByType).flat().map((tag: any) => [
+      tag.id,
+      Object.values(lookTagsMap).filter(ids => ids.includes(tag.id)).length
+    ])
+  );
+
+  const browseLooks = browseTagIds.size === 0
+    ? looks
+    : looks.filter(l => {
+        const lTags = lookTagsMap[l.id] || [];
+        return Array.from(browseTagIds).every(tid => lTags.includes(tid));
+      });
+
+  const enterEditFromBrowse = (lookId: string) => {
+    const grid = document.getElementById("browse-grid");
+    if (grid) setBrowseScrollPos(grid.scrollTop);
+    const i = filtered.findIndex(l => l.id === lookId);
+    if (i >= 0) setIdx(i);
+    else {
+      // look might not be in current filter — find in full looks array
+      const allIdx = looks.findIndex(l => l.id === lookId);
+      if (allIdx >= 0) {
+        handleBrandFilter("all");
+        setIdx(allIdx);
+      }
+    }
+    setBrowseMode(false);
+  };
+
+  const returnToBrowse = () => {
+    setBrowseMode(true);
+    setTimeout(() => {
+      const grid = document.getElementById("browse-grid");
+      if (grid) grid.scrollTop = browseScrollPos;
+    }, 50);
   };
 
   useEffect(() => {
@@ -315,14 +377,150 @@ export default function TagStudio() {
             style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",fontFamily:"Inter,sans-serif",width:80,textAlign:"center"}}
           />
 
+          {/* Browse / Edit toggle */}
+          <div style={{display:"flex",background:C.lift1,borderRadius:20,padding:2,gap:2}}>
+            <button onClick={() => setBrowseMode(false)}
+              style={{background:!browseMode?C.white:"transparent",border:"none",color:!browseMode?"#212121":C.muted,padding:"5px 14px",fontSize:13,cursor:"pointer",borderRadius:18,fontFamily:"Inter,sans-serif",fontWeight:!browseMode?600:400,transition:"all 0.15s"}}>
+              Edit
+            </button>
+            <button onClick={() => setBrowseMode(true)}
+              style={{background:browseMode?C.white:"transparent",border:"none",color:browseMode?"#212121":C.muted,padding:"5px 14px",fontSize:13,cursor:"pointer",borderRadius:18,fontFamily:"Inter,sans-serif",fontWeight:browseMode?600:400,transition:"all 0.15s"}}>
+              Browse
+            </button>
+          </div>
+
           {/* Save indicator */}
           <span style={{fontSize:12,color:flash&&!saving?C.green:C.muted,opacity:saving||flash?1:0,transition:"opacity 0.3s",minWidth:60,textAlign:"right",fontWeight:500}}>
             {saving ? "saving…" : "saved ✓"}
           </span>
         </div>
 
-        {/* ── Body ── */}
-        <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+        {/* ── Browse Mode ── */}
+        {browseMode && (
+          <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+
+            {/* Left sidebar — tag filters */}
+            <div style={{width:220,flexShrink:0,borderRight:`1px solid ${C.lift1}`,overflowY:"auto",padding:"16px 12px",display:"flex",flexDirection:"column",gap:16}}>
+
+              {/* Clear filters */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted}}>
+                  Filter
+                </span>
+                {browseTagIds.size > 0 && (
+                  <button onClick={() => setBrowseTagIds(new Set())}
+                    style={{background:"transparent",border:"none",color:C.muted,fontSize:12,cursor:"pointer",padding:0,fontFamily:"Inter,sans-serif"}}>
+                    Clear {browseTagIds.size}
+                  </button>
+                )}
+              </div>
+
+              {/* Match count */}
+              <div style={{fontSize:13,color:C.text,fontWeight:500}}>
+                <span style={{color:C.white,fontWeight:700}}>{browseLooks.length}</span>
+                <span style={{color:C.muted}}> looks</span>
+              </div>
+
+              {/* Tag categories with checkboxes */}
+              {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => {
+                const tagsWithLooks = (tagsByType[type] || []).filter((tag: any) => (tagCountMap[tag.id] || 0) > 0);
+                if (tagsWithLooks.length === 0) return null;
+                const isExpanded = expandedTypes.has(type);
+                return (
+                  <div key={type}>
+                    <button
+                      onClick={() => toggleExpandedType(type)}
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",background:"transparent",border:"none",cursor:"pointer",padding:"0 0 6px 0",marginBottom:6,borderBottom:`1px solid ${C.lift1}`}}>
+                      <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0"}}>
+                        {TYPE_LABELS[type] || type}
+                      </span>
+                      <span style={{fontSize:10,color:C.dim}}>{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {isExpanded && (
+                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                        {tagsWithLooks.map((tag: any) => {
+                          const checked = browseTagIds.has(tag.id);
+                          const tagCount = tagCountMap[tag.id] || 0;
+                          return (
+                            <label key={tag.id} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"3px 4px",borderRadius:6,background:checked?C.lift2:"transparent"}}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleBrowseTag(tag.id)}
+                                style={{accentColor:C.white,width:13,height:13,cursor:"pointer"}}
+                              />
+                              <span style={{fontSize:13,color:checked?C.text:C.muted,flex:1}}>{tag.name}</span>
+                              <span style={{fontSize:11,color:C.dim}}>{tagCount}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Right — look grid */}
+            <div id="browse-grid" style={{flex:1,overflowY:"auto",padding:16}}>
+              {browseLooks.length === 0 ? (
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.dim,fontSize:14}}>
+                  No looks match the selected tags
+                </div>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:16}}>
+                  {browseLooks.map((l: any) => {
+                    const lTags = lookTagsMap[l.id] || [];
+                    const primaryColorTag = lTags.map(tid => 
+                      Object.values(tagsByType).flat().find((t:any) => t.id === tid && t.tag_type === "color")
+                    ).find(Boolean) as any;
+                    return (
+                      <div key={l.id}
+                        onClick={() => enterEditFromBrowse(l.id)}
+                        style={{cursor:"pointer",borderRadius:10,overflow:"hidden",background:C.lift1,transition:"transform 0.1s",position:"relative"}}
+                        onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
+                        onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
+                        {/* Image — tall aspect ratio to show the looks properly */}
+                        <div style={{paddingTop:"133%",position:"relative",background:"#181818"}}>
+                          <img
+                            src={l.cloudinary_url}
+                            alt=""
+                            loading="lazy"
+                            style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}
+                          />
+                        </div>
+                        {/* Footer */}
+                        <div style={{padding:"8px 10px",display:"flex",flexDirection:"column",gap:2}}>
+                          <span style={{fontSize:12,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                            {l.brands?.name || "—"}
+                          </span>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <span style={{fontSize:11,color:C.muted}}>{l.season_display || ""}</span>
+                            <span style={{fontSize:11,color:lTags.length > 0 ? C.green : C.dim}}>
+                              {lTags.length} tags
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Edit Mode ── */}
+        {!browseMode && (
+          <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+
+            {/* Back to browse button */}
+            <div style={{position:"absolute",top:52,left:8,zIndex:10}}>
+              <button onClick={returnToBrowse}
+                style={{background:C.lift2,border:"none",color:C.muted,padding:"5px 12px",fontSize:12,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",display:"flex",alignItems:"center",gap:6}}>
+                ← Browse
+              </button>
+            </div>
 
           {/* Left — image 50% */}
           <div style={{width:"50%",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:`1px solid ${C.lift1}`}}>
