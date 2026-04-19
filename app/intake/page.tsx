@@ -460,7 +460,19 @@ export default function IntakePage() {
     let c; try { c = await post("people", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
     const role = modal?.role;
-    if (role === "creative_director") setCreditCDs(prev => [...prev, c]);
+    if (role === "creative_director") {
+      setCreditCDs(prev => [...prev, c]);
+      // If a brand is already selected and the person was saved to DB, write the brand_directors link
+      if (brand?.id && !brand.id.startsWith("local-") && !c.id.startsWith("local-")) {
+        try {
+          await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
+            method: "POST",
+            headers: { ...H, Prefer: "resolution=merge-duplicates" },
+            body: JSON.stringify({ brand_id: brand.id, person_id: c.id, is_current: true }),
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
     else if (role === "photographer") setCreditPhotogs(prev => [...prev, c]);
     else setCreditStylists(prev => [...prev, c]);
     setModal(null);
