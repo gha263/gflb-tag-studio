@@ -191,7 +191,7 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, b, t, et] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at"),
+        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at&limit=2000"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
         sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id,tag_id&limit=10000"),
@@ -468,7 +468,7 @@ export default function TagStudio() {
                   No looks match the selected tags
                 </div>
               ) : (
-                <div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:16}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(5, 1fr)",gap:8}}>
                   {browseLooks.map((l: any) => {
                     const lTags = lookTagsMap[l.id] || [];
                     const primaryColorTag = lTags.map(tid => 
@@ -490,7 +490,7 @@ export default function TagStudio() {
                           />
                         </div>
                         {/* Footer */}
-                        <div style={{padding:"8px 10px",display:"flex",flexDirection:"column",gap:2}}>
+                        <div style={{padding:"6px 8px",display:"flex",flexDirection:"column",gap:1}}>
                           <span style={{fontSize:12,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                             {l.brands?.name || "—"}
                           </span>
