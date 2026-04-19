@@ -393,12 +393,12 @@ export default function IntakePage() {
     async function loadEntities() {
       try {
         const [b, p, e, l, pl, sn] = await Promise.all([
-          fetch(`${SUPABASE_URL}/rest/v1/brands?select=id,name,slug&order=name`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/people?select=id,name,primary_role&order=name`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/events?select=id,name,event_type&order=name`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/locations?select=id,name,location_type,country_code&order=location_type,name`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/source_platforms?select=id,name,slug&order=name`, { headers: H }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/looks?select=source_name&not=source_name.is.null&order=source_name`, { headers: H }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/brands?select=id,name,slug&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/people?select=id,name,primary_role&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/events?select=id,name,event_type&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/locations?select=id,name,location_type,country_code&order=location_type,name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/source_platforms?select=id,name,slug&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          fetch(`${SUPABASE_URL}/rest/v1/looks?select=source_name&not=source_name.is.null&order=source_name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
         ]);
         if (Array.isArray(b) && b.length > 0) setBrands(b);
         if (Array.isArray(p) && p.length > 0) setPeople(p);
