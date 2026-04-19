@@ -205,7 +205,7 @@ function SectionHead({ title }: { title: string }) {
 
 type Look = {
   id: string; status: string; cloudinary_url: string;
-  source_url: string | null; source_name: string | null;
+  source_url: string | null; source_name: string | null; source_platform_id: string | null;
   scene: string | null; gender: string | null;
   season_display: string | null; season_term: string | null; season_year: number | null;
   date_published: string | null; is_key_look: boolean; notes: string | null;
@@ -241,6 +241,8 @@ export default function ReviewQueue() {
   const [editPublishDate, setEditPublishDate] = useState("");
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editSourceName, setEditSourceName] = useState("");
+  const [editSourcePlatform, setEditSourcePlatform] = useState<any>(null);
+  const [editCloudinaryUrl, setEditCloudinaryUrl] = useState("");
   const [editPublication, setEditPublication] = useState<any>(null);
   const [editEvent, setEditEvent] = useState<any>(null);
   const [editPhotoCity, setEditPhotoCity] = useState<any>(null);
@@ -286,7 +288,7 @@ export default function ReviewQueue() {
 
       const filter = statusFilter === "all" ? "" : `status=eq.${statusFilter}&`;
       const [data, tagCounts] = await Promise.all([
-        sb(`looks?${filter}select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,publication_id,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`),
+        sb(`looks?${filter}select=id,status,cloudinary_url,source_url,source_name,source_platform_id,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,brand_id,event_id,photo_city_id,photo_country_id,courtesy_brand_id,collaborating_brand_id,collection_title,collection_description,publication_id,brand:brand_id(name),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`),
         sb(`entity_tags?entity_type=eq.look&select=entity_id`),
       ]);
 
@@ -324,6 +326,8 @@ export default function ReviewQueue() {
     setEditPublishDate(look.date_published || "");
     setEditSourceUrl(look.source_url || "");
     setEditSourceName(look.source_name || "");
+    setEditSourcePlatform(look.source_platform_id ? platforms.find(p => p.id === look.source_platform_id) || null : null);
+    setEditCloudinaryUrl(look.cloudinary_url || "");
     setEditPublication(look.publication_id ? platforms.find(p => p.id === look.publication_id) || null : null);
     setEditCollectionTitle(look.collection_title || "");
     setEditCollectionDesc(look.collection_description || "");
@@ -353,6 +357,8 @@ export default function ReviewQueue() {
           date_published: editPublishDate || null,
           source_url: editSourceUrl || null,
           source_name: editSourceName || null,
+          source_platform_id: editSourcePlatform?.id || null,
+          cloudinary_url: editCloudinaryUrl || null,
           publication_id: editPublication?.id || null,
           event_id: editEvent?.id || null,
           photo_city_id: editPhotoCity?.id || null,
@@ -690,12 +696,20 @@ export default function ReviewQueue() {
                   {/* SOURCE */}
                   <SectionHead title="Source" />
 
+                  <F label="Source Platform" span2>
+                    <Typeahead items={platforms} value={editSourcePlatform} onChange={setEditSourcePlatform} onClear={() => setEditSourcePlatform(null)} placeholder="e.g. Instagram, Brand Website..." />
+                  </F>
+
                   <F label="Post URL" span2>
                     <input value={editSourceUrl} onChange={e => setEditSourceUrl(e.target.value)} placeholder="https://www.instagram.com/p/..." style={inp} />
                   </F>
 
                   <F label="Source Account" span2>
                     <input value={editSourceName} onChange={e => setEditSourceName(e.target.value)} placeholder="@account_handle" style={inp} />
+                  </F>
+
+                  <F label="Image URL (Cloudinary)" span2>
+                    <input value={editCloudinaryUrl} onChange={e => setEditCloudinaryUrl(e.target.value)} placeholder="https://res.cloudinary.com/..." style={inp} />
                   </F>
 
                   <F label="Publication" span2>
