@@ -21,6 +21,23 @@ const sb = async (path: string, opts: any = {}) => {
   return text ? JSON.parse(text) : null;
 };
 
+// For large read-only fetches that need to bypass PostgREST's default row cap
+const sbAll = async (path: string) => {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+      "Range-Unit": "items",
+      "Range": "0-19999",
+    },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+};
+
 const TAG_TYPE_ORDER = [
   "color",
   "form",
@@ -191,10 +208,10 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, b, t, et] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at&limit=2000"),
+        sbAll("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
-        sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id,tag_id&limit=10000"),
+        sbAll("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id,tag_id,is_primary"),
       ]);
       const brandMap: Record<string,string> = {};
       b.forEach((br: any) => { brandMap[br.id] = br.name; });
