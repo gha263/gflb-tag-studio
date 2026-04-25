@@ -21,57 +21,28 @@ const sb = async (path: string, opts: any = {}) => {
   return text ? JSON.parse(text) : null;
 };
 
-// For large read-only fetches that need to bypass PostgREST's default row cap
-const sbAll = async (path: string) => {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-      "Range-Unit": "items",
-      "Range": "0-19999",
-    },
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+// Fetch look IDs for a given tag — targeted, never hits row caps
+const fetchLookIdsForTag = async (tagId: string): Promise<Set<string>> => {
+  const rows = await sb(`entity_tags?tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human&select=entity_id`);
+  return new Set((rows || []).map((r: any) => r.entity_id));
 };
 
 const TAG_TYPE_ORDER = [
-  "color",
-  "form",
-  "craft",
-  "pattern",
-  "design_language",
-  "mood",
-  "garment_types",
+  "color", "form", "craft", "pattern", "design_language", "mood", "garment_types",
 ];
 
 const TYPE_LABELS: {[key: string]: string} = {
-  "color":           "Color",
-  "form":            "Form",
-  "craft":           "Craft",
-  "pattern":         "Pattern",
-  "design_language": "Design Language",
-  "mood":            "Mood",
-  "garment_types":   "Garment",
+  "color": "Color", "form": "Form", "craft": "Craft",
+  "pattern": "Pattern", "design_language": "Design Language",
+  "mood": "Mood", "garment_types": "Garment",
 };
 
 const EXCLUDED = ["brand","season","event","brand_category","brand_production","event_format"];
 
-// ── ChatGPT palette ────────────────────────────────────────────────────────────
 const C = {
-  bg:      "#212121",
-  lift1:   "#2f2f2f",   // first level surface
-  lift2:   "#3a3a3a",   // second level — inputs, buttons
-  lift3:   "#424242",   // hover states
-  text:    "#ececec",
-  muted:   "#8e8ea0",
-  dim:     "#555",
-  white:   "#fff",
-  green:   "#4caf6e",
-  red:     "#e05a4e",
+  bg: "#212121", lift1: "#2f2f2f", lift2: "#3a3a3a", lift3: "#424242",
+  text: "#ececec", muted: "#8e8ea0", dim: "#555", white: "#fff",
+  green: "#4caf6e", red: "#e05a4e",
 };
 
 export default function TagStudio() {
@@ -85,8 +56,6 @@ export default function TagStudio() {
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
   const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
-  const [tagFilter, setTagFilter] = useState("all");
-  const [lookTagsMap, setLookTagsMap] = useState<Record<string, string[]>>({});
   const [jumpInput, setJumpInput] = useState("");
   const [filtered, setFiltered] = useState<any[]>([]);
   const [newName, setNewName] = useState("");
@@ -98,21 +67,31 @@ export default function TagStudio() {
   const [editingNotes, setEditingNotes] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
 
+  // ── Tag filter (toolbar dropdown) ────────────────────────────────────────────
+  const [tagFilterId, setTagFilterId] = useState("all");
+  const [tagFilterLookIds, setTagFilterLookIds] = useState<Set<string> | null>(null);
+  const [tagFilterLoading, setTagFilterLoading] = useState(false);
+
   // ── Browse mode ──────────────────────────────────────────────────────────────
   const [browseMode, setBrowseMode] = useState(false);
   const [browseTagIds, setBrowseTagIds] = useState<Set<string>>(new Set());
+  // Cache: tagId → Set<lookId>
+  const [lookIdCache, setLookIdCache] = useState<Record<string, Set<string>>>({});
   const [browseScrollPos, setBrowseScrollPos] = useState(0);
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["color"]));
+  // tagCounts: tagId → number, loaded lazily
+  const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
+  const [loadingCounts, setLoadingCounts] = useState<Set<string>>(new Set());
 
   useEffect(() => { loadData(); }, []);
 
   useEffect(() => {
     let f = brandFilter === "all" ? looks : looks.filter(l => l.brand_id === brandFilter);
-    if (tagFilter !== "all") f = f.filter(l => (lookTagsMap[l.id] || []).includes(tagFilter));
+    if (tagFilterLookIds !== null) f = f.filter(l => tagFilterLookIds.has(l.id));
     setFiltered(f);
-  }, [brandFilter, tagFilter, looks, lookTagsMap]);
+    setIdx(i => Math.min(i, Math.max(0, f.length - 1)));
+  }, [brandFilter, tagFilterLookIds, looks]);
 
-  // Persist position
   useEffect(() => { try { localStorage.setItem("ts_idx", String(idx)); } catch {} }, [idx]);
   useEffect(() => { try { localStorage.setItem("ts_brand", brandFilter); } catch {} }, [brandFilter]);
 
@@ -129,7 +108,20 @@ export default function TagStudio() {
   const prev = useCallback(() => { if (idx > 0) setIdx(i => i - 1); }, [idx]);
 
   const handleBrandFilter = (val: string) => { setBrandFilter(val); setIdx(0); };
-  const handleTagFilter = (val: string) => { setTagFilter(val); setIdx(0); };
+
+  const handleTagFilter = async (tagId: string) => {
+    setTagFilterId(tagId);
+    setIdx(0);
+    if (tagId === "all") {
+      setTagFilterLookIds(null);
+      return;
+    }
+    setTagFilterLoading(true);
+    const ids = lookIdCache[tagId] ?? await fetchLookIdsForTag(tagId);
+    setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
+    setTagFilterLookIds(ids);
+    setTagFilterLoading(false);
+  };
 
   const handleJump = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
@@ -139,49 +131,58 @@ export default function TagStudio() {
   };
 
   // ── Browse mode helpers ──────────────────────────────────────────────────────
-  const toggleBrowseTag = (tagId: string) => {
-    setBrowseTagIds(prev => {
-      const next = new Set(prev);
-      if (next.has(tagId)) next.delete(tagId); else next.add(tagId);
-      return next;
-    });
+
+  const getOrFetchIds = async (tagId: string): Promise<Set<string>> => {
+    if (lookIdCache[tagId]) return lookIdCache[tagId];
+    const ids = await fetchLookIdsForTag(tagId);
+    setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
+    return ids;
   };
 
-  const toggleExpandedType = (type: string) => {
-    setExpandedTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type); else next.add(type);
-      return next;
-    });
+  const toggleBrowseTag = async (tagId: string) => {
+    const next = new Set(browseTagIds);
+    if (next.has(tagId)) {
+      next.delete(tagId);
+      setBrowseTagIds(next);
+      return;
+    }
+    await getOrFetchIds(tagId);
+    next.add(tagId);
+    setBrowseTagIds(next);
   };
 
-  // Count how many looks have each tag
-  const tagCountMap = Object.fromEntries(
-    Object.values(tagsByType).flat().map((tag: any) => [
-      tag.id,
-      Object.values(lookTagsMap).filter(ids => ids.includes(tag.id)).length
-    ])
-  );
+  const toggleExpandedType = async (type: string) => {
+    const next = new Set(expandedTypes);
+    if (next.has(type)) { next.delete(type); setExpandedTypes(next); return; }
+    next.add(type);
+    setExpandedTypes(next);
+    // Fetch counts for uncached tags in this category
+    const tags = (tagsByType[type] || []).filter((t: any) => tagCounts[t.id] === undefined);
+    if (tags.length === 0) return;
+    setLoadingCounts(prev => { const s = new Set(prev); tags.forEach((t: any) => s.add(t.id)); return s; });
+    await Promise.all(tags.map(async (tag: any) => {
+      const ids = await getOrFetchIds(tag.id);
+      setTagCounts(prev => ({ ...prev, [tag.id]: ids.size }));
+      setLoadingCounts(prev => { const s = new Set(prev); s.delete(tag.id); return s; });
+    }));
+  };
 
-  const browseLooks = browseTagIds.size === 0
-    ? looks
-    : looks.filter(l => {
-        const lTags = lookTagsMap[l.id] || [];
-        return Array.from(browseTagIds).every(tid => lTags.includes(tid));
-      });
+  const browseLooks = (() => {
+    if (browseTagIds.size === 0) return looks;
+    const selectedIds = Array.from(browseTagIds);
+    const sets = selectedIds.map(tid => lookIdCache[tid]).filter(Boolean);
+    if (sets.length !== selectedIds.length) return looks; // still fetching
+    return looks.filter(l => sets.every(s => s.has(l.id)));
+  })();
 
   const enterEditFromBrowse = (lookId: string) => {
     const grid = document.getElementById("browse-grid");
     if (grid) setBrowseScrollPos(grid.scrollTop);
     const i = filtered.findIndex(l => l.id === lookId);
-    if (i >= 0) setIdx(i);
+    if (i >= 0) { setIdx(i); }
     else {
-      // look might not be in current filter — find in full looks array
       const allIdx = looks.findIndex(l => l.id === lookId);
-      if (allIdx >= 0) {
-        handleBrandFilter("all");
-        setIdx(allIdx);
-      }
+      if (allIdx >= 0) { handleBrandFilter("all"); setIdx(allIdx); }
     }
     setBrowseMode(false);
   };
@@ -198,37 +199,35 @@ export default function TagStudio() {
     const fn = (e: KeyboardEvent) => {
       if (["INPUT","SELECT","TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
       if (e.key === "ArrowRight" || e.key === "l") next();
-      if (e.key === "ArrowLeft"  || e.key === "h") prev();
+      if (e.key === "ArrowLeft" || e.key === "h") prev();
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
   }, [next, prev]);
 
+  // ── Data loading ─────────────────────────────────────────────────────────────
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [l, b, t, et] = await Promise.all([
-        sbAll("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at"),
+      const [l, b, t] = await Promise.all([
+        sb("looks?select=id,cloudinary_url,caption,brand_id,season_display,source_url,notes&order=brand_id,created_at&limit=2000"),
         sb("brands?select=id,name&order=name"),
         sb("tags?select=*&order=tag_type,name"),
-        sbAll("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id,tag_id,is_primary"),
       ]);
       const brandMap: Record<string,string> = {};
       b.forEach((br: any) => { brandMap[br.id] = br.name; });
       const looksWithBrand = l.map((look: any) => ({ ...look, brands: { name: brandMap[look.brand_id] || "" } }));
-      // Build lookId → [tagIds] map
-      const tagMap: Record<string, string[]> = {};
-      et.forEach((row: any) => {
-        if (!tagMap[row.entity_id]) tagMap[row.entity_id] = [];
-        tagMap[row.entity_id].push(row.tag_id);
-      });
       const usable = t.filter((t: any) => !EXCLUDED.includes(t.tag_type));
       const grouped = usable.reduce((acc: Record<string,any[]>, tag: any) => {
         if (!acc[tag.tag_type]) acc[tag.tag_type] = [];
         acc[tag.tag_type].push(tag);
         return acc;
       }, {});
-      setLooks(looksWithBrand); setFiltered(looksWithBrand); setBrands(b); setTagsByType(grouped); setLookTagsMap(tagMap);
+      setLooks(looksWithBrand);
+      setFiltered(looksWithBrand);
+      setBrands(b);
+      setTagsByType(grouped);
     } catch(e) { console.error(e); }
     setLoading(false);
   };
@@ -250,11 +249,30 @@ export default function TagStudio() {
         next.delete(tagId);
         if (primaryTagId === tagId) setPrimaryTagId(null);
         await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, { method:"DELETE", prefer:"" });
-        setLookTagsMap(prev => ({ ...prev, [look.id]: (prev[look.id] || []).filter(id => id !== tagId) }));
+        // Update cache
+        setTagCounts(prev => ({ ...prev, [tagId]: Math.max(0, (prev[tagId] ?? 1) - 1) }));
+        setLookIdCache(prev => {
+          if (!prev[tagId]) return prev;
+          const s = new Set(prev[tagId]); s.delete(look.id);
+          return { ...prev, [tagId]: s };
+        });
+        // If tag filter is active on this tag, update it
+        if (tagFilterId === tagId) {
+          setTagFilterLookIds(prev => { if (!prev) return prev; const s = new Set(prev); s.delete(look.id); return s; });
+        }
       } else {
         next.add(tagId);
         await sb("entity_tags", { method:"POST", body: JSON.stringify({ entity_id:look.id, entity_type:"look", tag_id:tagId, source:"human", model:null }), prefer:"resolution=merge-duplicates" });
-        setLookTagsMap(prev => ({ ...prev, [look.id]: [...(prev[look.id] || []), tagId] }));
+        // Update cache
+        setTagCounts(prev => ({ ...prev, [tagId]: (prev[tagId] ?? 0) + 1 }));
+        setLookIdCache(prev => {
+          if (!prev[tagId]) return prev;
+          const s = new Set(prev[tagId]); s.add(look.id);
+          return { ...prev, [tagId]: s };
+        });
+        if (tagFilterId === tagId) {
+          setTagFilterLookIds(prev => { if (!prev) return prev; const s = new Set(prev); s.add(look.id); return s; });
+        }
       }
       setActiveTags(next);
     } catch(e) { console.error(e); }
@@ -266,19 +284,14 @@ export default function TagStudio() {
     if (!look) return;
     setSaving(true);
     try {
-      // Clear existing primary on this look
       await sb(`entity_tags?entity_id=eq.${look.id}&entity_type=eq.look&source=eq.human&is_primary=eq.true`, {
-        method: "PATCH", prefer: "",
-        body: JSON.stringify({ is_primary: false }),
+        method:"PATCH", prefer:"", body: JSON.stringify({ is_primary: false }),
       });
-      // If clicking the already-primary tag, just clear it
       if (primaryTagId === tagId) {
         setPrimaryTagId(null);
       } else {
-        // Set new primary
         await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, {
-          method: "PATCH", prefer: "",
-          body: JSON.stringify({ is_primary: true }),
+          method:"PATCH", prefer:"", body: JSON.stringify({ is_primary: true }),
         });
         setPrimaryTagId(tagId);
       }
@@ -353,7 +366,6 @@ export default function TagStudio() {
 
         {/* ── Toolbar ── */}
         <div style={{display:"flex",alignItems:"center",padding:"8px 20px",background:C.bg,gap:16,flexShrink:0,borderBottom:`1px solid ${C.lift1}`}}>
-          {/* Progress bar */}
           <div style={{flex:1,display:"flex",alignItems:"center",gap:10}}>
             <div style={{flex:1,height:3,background:C.lift2,borderRadius:2,overflow:"hidden"}}>
               <div style={{height:"100%",background:C.white,width:`${pct}%`,transition:"width 0.3s",borderRadius:2}}/>
@@ -361,21 +373,15 @@ export default function TagStudio() {
             <span style={{fontSize:13,color:C.muted,whiteSpace:"nowrap",fontWeight:500}}>{idx+1} / {filtered.length}</span>
           </div>
 
-          {/* Brand filter */}
-          <select
-            value={brandFilter}
-            onChange={e => handleBrandFilter(e.target.value)}
+          <select value={brandFilter} onChange={e => handleBrandFilter(e.target.value)}
             style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
             <option value="all">All Brands</option>
             {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
 
-          {/* Tag filter */}
-          <select
-            value={tagFilter}
-            onChange={e => handleTagFilter(e.target.value)}
-            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
-            <option value="all">All Tags</option>
+          <select value={tagFilterId} onChange={e => handleTagFilter(e.target.value)}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500,opacity:tagFilterLoading?0.6:1}}>
+            <option value="all">{tagFilterLoading ? "Loading…" : "All Tags"}</option>
             {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => (
               <optgroup key={type} label={TYPE_LABELS[type] || type}>
                 {(tagsByType[type] || []).map((tag: any) => (
@@ -385,16 +391,11 @@ export default function TagStudio() {
             ))}
           </select>
 
-          {/* Jump to look */}
-          <input
-            value={jumpInput}
-            onChange={e => setJumpInput(e.target.value)}
-            onKeyDown={handleJump}
+          <input value={jumpInput} onChange={e => setJumpInput(e.target.value)} onKeyDown={handleJump}
             placeholder="Go to #"
             style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",fontFamily:"Inter,sans-serif",width:80,textAlign:"center"}}
           />
 
-          {/* Browse / Edit toggle */}
           <div style={{display:"flex",background:C.lift1,borderRadius:20,padding:2,gap:2}}>
             <button onClick={() => setBrowseMode(false)}
               style={{background:!browseMode?C.white:"transparent",border:"none",color:!browseMode?"#212121":C.muted,padding:"5px 14px",fontSize:13,cursor:"pointer",borderRadius:18,fontFamily:"Inter,sans-serif",fontWeight:!browseMode?600:400,transition:"all 0.15s"}}>
@@ -406,7 +407,6 @@ export default function TagStudio() {
             </button>
           </div>
 
-          {/* Save indicator */}
           <span style={{fontSize:12,color:flash&&!saving?C.green:C.muted,opacity:saving||flash?1:0,transition:"opacity 0.3s",minWidth:60,textAlign:"right",fontWeight:500}}>
             {saving ? "saving…" : "saved ✓"}
           </span>
@@ -415,15 +415,9 @@ export default function TagStudio() {
         {/* ── Browse Mode ── */}
         {browseMode && (
           <div style={{display:"flex",flex:1,overflow:"hidden"}}>
-
-            {/* Left sidebar — tag filters */}
             <div style={{width:220,flexShrink:0,borderRight:`1px solid ${C.lift1}`,overflowY:"auto",padding:"16px 12px",display:"flex",flexDirection:"column",gap:16}}>
-
-              {/* Clear filters */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted}}>
-                  Filter
-                </span>
+                <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted}}>Filter</span>
                 {browseTagIds.size > 0 && (
                   <button onClick={() => setBrowseTagIds(new Set())}
                     style={{background:"transparent",border:"none",color:C.muted,fontSize:12,cursor:"pointer",padding:0,fontFamily:"Inter,sans-serif"}}>
@@ -432,21 +426,17 @@ export default function TagStudio() {
                 )}
               </div>
 
-              {/* Match count */}
               <div style={{fontSize:13,color:C.text,fontWeight:500}}>
                 <span style={{color:C.white,fontWeight:700}}>{browseLooks.length}</span>
                 <span style={{color:C.muted}}> looks</span>
               </div>
 
-              {/* Tag categories with checkboxes */}
               {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => {
-                const tagsWithLooks = (tagsByType[type] || []).filter((tag: any) => (tagCountMap[tag.id] || 0) > 0);
-                if (tagsWithLooks.length === 0) return null;
                 const isExpanded = expandedTypes.has(type);
+                const tags = tagsByType[type] || [];
                 return (
                   <div key={type}>
-                    <button
-                      onClick={() => toggleExpandedType(type)}
+                    <button onClick={() => toggleExpandedType(type)}
                       style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",background:"transparent",border:"none",cursor:"pointer",padding:"0 0 6px 0",marginBottom:6,borderBottom:`1px solid ${C.lift1}`}}>
                       <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0"}}>
                         {TYPE_LABELS[type] || type}
@@ -455,19 +445,21 @@ export default function TagStudio() {
                     </button>
                     {isExpanded && (
                       <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                        {tagsWithLooks.map((tag: any) => {
+                        {tags.map((tag: any) => {
                           const checked = browseTagIds.has(tag.id);
-                          const tagCount = tagCountMap[tag.id] || 0;
+                          const count = tagCounts[tag.id];
+                          const counting = loadingCounts.has(tag.id);
+                          if (count === 0 && !checked) return null;
                           return (
                             <label key={tag.id} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"3px 4px",borderRadius:6,background:checked?C.lift2:"transparent"}}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
+                              <input type="checkbox" checked={checked}
                                 onChange={() => toggleBrowseTag(tag.id)}
                                 style={{accentColor:C.white,width:13,height:13,cursor:"pointer"}}
                               />
                               <span style={{fontSize:13,color:checked?C.text:C.muted,flex:1}}>{tag.name}</span>
-                              <span style={{fontSize:11,color:C.dim}}>{tagCount}</span>
+                              <span style={{fontSize:11,color:C.dim}}>
+                                {counting ? "…" : count !== undefined ? count : ""}
+                              </span>
                             </label>
                           );
                         })}
@@ -478,7 +470,6 @@ export default function TagStudio() {
               })}
             </div>
 
-            {/* Right — look grid */}
             <div id="browse-grid" style={{flex:1,overflowY:"auto",padding:16}}>
               {browseLooks.length === 0 ? (
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.dim,fontSize:14}}>
@@ -486,41 +477,24 @@ export default function TagStudio() {
                 </div>
               ) : (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(5, 1fr)",gap:8}}>
-                  {browseLooks.map((l: any) => {
-                    const lTags = lookTagsMap[l.id] || [];
-                    const primaryColorTag = lTags.map(tid => 
-                      Object.values(tagsByType).flat().find((t:any) => t.id === tid && t.tag_type === "color")
-                    ).find(Boolean) as any;
-                    return (
-                      <div key={l.id}
-                        onClick={() => enterEditFromBrowse(l.id)}
-                        style={{cursor:"pointer",borderRadius:10,overflow:"hidden",background:C.lift1,transition:"transform 0.1s",position:"relative"}}
-                        onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
-                        onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
-                        {/* Image — tall aspect ratio to show the looks properly */}
-                        <div style={{paddingTop:"133%",position:"relative",background:"#181818"}}>
-                          <img
-                            src={l.cloudinary_url}
-                            alt=""
-                            loading="lazy"
-                            style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}
-                          />
-                        </div>
-                        {/* Footer */}
-                        <div style={{padding:"6px 8px",display:"flex",flexDirection:"column",gap:1}}>
-                          <span style={{fontSize:12,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                            {l.brands?.name || "—"}
-                          </span>
-                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <span style={{fontSize:11,color:C.muted}}>{l.season_display || ""}</span>
-                            <span style={{fontSize:11,color:lTags.length > 0 ? C.green : C.dim}}>
-                              {lTags.length} tags
-                            </span>
-                          </div>
-                        </div>
+                  {browseLooks.map((l: any) => (
+                    <div key={l.id} onClick={() => enterEditFromBrowse(l.id)}
+                      style={{cursor:"pointer",borderRadius:10,overflow:"hidden",background:C.lift1,transition:"transform 0.1s"}}
+                      onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
+                      onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
+                      <div style={{paddingTop:"133%",position:"relative",background:"#181818"}}>
+                        <img src={l.cloudinary_url} alt="" loading="lazy"
+                          style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}
+                        />
                       </div>
-                    );
-                  })}
+                      <div style={{padding:"6px 8px",display:"flex",flexDirection:"column",gap:1}}>
+                        <span style={{fontSize:12,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                          {l.brands?.name || "—"}
+                        </span>
+                        <span style={{fontSize:11,color:C.muted}}>{l.season_display || ""}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -531,7 +505,6 @@ export default function TagStudio() {
         {!browseMode && (
           <div style={{display:"flex",flex:1,overflow:"hidden"}}>
 
-            {/* Back to browse button */}
             <div style={{position:"absolute",top:52,left:8,zIndex:10}}>
               <button onClick={returnToBrowse}
                 style={{background:C.lift2,border:"none",color:C.muted,padding:"5px 12px",fontSize:12,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",display:"flex",alignItems:"center",gap:6}}>
@@ -539,192 +512,143 @@ export default function TagStudio() {
               </button>
             </div>
 
-          {/* Left — image 50% */}
-          <div style={{width:"50%",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:`1px solid ${C.lift1}`}}>
-            {look ? (
-              <>
-                {/* Image */}
-                <div style={{flex:1,minHeight:0,background:"#181818",position:"relative",overflow:"hidden"}}>
-                  {!imgLoaded && <div style={{position:"absolute",inset:0,background:"#181818"}}/>}
-                  <img
-                    key={look.cloudinary_url}
-                    src={look.cloudinary_url}
-                    alt=""
-                    onLoad={() => setImgLoaded(true)}
-                    style={{width:"100%",height:"100%",objectFit:"contain",display:"block",opacity:imgLoaded?1:0,transition:"opacity 0.4s"}}
-                  />
-                </div>
-
-                {/* Meta panel below image — fixed height so Prev/Next always visible */}
-                <div style={{flexShrink:0,background:C.lift1,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
-
-                  {/* Brand / season / source / tag count */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                      <span style={{fontSize:15,fontWeight:600,color:C.text}}>{look.brands?.name || "—"}</span>
-                      {look.season_display && <span style={{fontSize:12,color:C.muted}}>{look.season_display}</span>}
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      {look.source_url && (
-                        <a href={look.source_url} target="_blank" rel="noreferrer"
-                          style={{fontSize:12,color:C.text,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,fontWeight:500}}>
-                          ↗ source
-                        </a>
-                      )}
-                      <span style={{fontSize:13,color:C.muted,fontWeight:500}}>
-                        <span style={{color:C.text,fontWeight:600}}>{activeTags.size}</span> tags
-                      </span>
-                    </div>
+            <div style={{width:"50%",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:`1px solid ${C.lift1}`}}>
+              {look ? (
+                <>
+                  <div style={{flex:1,minHeight:0,background:"#181818",position:"relative",overflow:"hidden"}}>
+                    {!imgLoaded && <div style={{position:"absolute",inset:0,background:"#181818"}}/>}
+                    <img key={look.cloudinary_url} src={look.cloudinary_url} alt=""
+                      onLoad={() => setImgLoaded(true)}
+                      style={{width:"100%",height:"100%",objectFit:"contain",display:"block",opacity:imgLoaded?1:0,transition:"opacity 0.4s"}}
+                    />
                   </div>
 
-                  {/* Notes — fixed max height, scrollable if long */}
-                  {!editingNotes ? (
-                    <div
-                      onClick={() => setEditingNotes(true)}
-                      style={{
-                        fontSize:14,color:notes?C.text:C.dim,
-                        background:C.lift2,borderRadius:10,
-                        padding:"8px 12px",cursor:"pointer",
-                        lineHeight:1.5,fontStyle:notes?"normal":"italic",
-                        maxHeight:72,overflowY:"auto",
-                      }}>
-                      {notes || "Add notes…"}
-                    </div>
-                  ) : (
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      <textarea
-                        value={notes}
-                        onChange={e => setNotes(e.target.value)}
-                        autoFocus rows={2}
-                        style={{background:"#484848",border:"1.5px solid #fff",color:C.text,padding:"8px 12px",fontSize:14,borderRadius:10,outline:"none",resize:"none",fontFamily:"Inter,sans-serif",lineHeight:1.5,width:"100%"}}
-                      />
-                      <div style={{display:"flex",gap:8}}>
-                        <button onClick={saveNotes} disabled={savingNotes}
-                          style={{background:C.white,border:"none",color:"#212121",padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
-                          {savingNotes?"…":"Save"}
-                        </button>
-                        <button onClick={() => { setEditingNotes(false); setNotes(filtered[idx]?.notes||""); }}
-                          style={{background:C.lift2,border:"none",color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
-                          Cancel
-                        </button>
+                  <div style={{flexShrink:0,background:C.lift1,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                        <span style={{fontSize:15,fontWeight:600,color:C.text}}>{look.brands?.name || "—"}</span>
+                        {look.season_display && <span style={{fontSize:12,color:C.muted}}>{look.season_display}</span>}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Prev / Next — always visible */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:2}}>
-                    <button onClick={prev}
-                      style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===0?0.25:1}}>
-                      ← Prev
-                    </button>
-                    <span style={{fontSize:11,color:C.dim}}>arrow keys</span>
-                    <button onClick={next}
-                      style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===filtered.length-1?0.25:1}}>
-                      Next →
-                    </button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.dim,fontSize:13}}>No looks</div>
-            )}
-          </div>
-
-          {/* Right — tags scrollable */}
-          <div style={{flex:1,overflowY:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:20,background:C.bg}}>
-            {orderedTypes.map(type => (
-              <div key={type}>
-                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0",paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
-                  {TYPE_LABELS[type]||type}
-                </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {(tagsByType[type]||[]).map(tag => {
-                    const on = activeTags.has(tag.id);
-                    const isColor = type === "color";
-                    const isPrimary = primaryTagId === tag.id;
-                    return (
-                      <div key={tag.id} style={{ display: "inline-flex", alignItems: "center", gap: 0 }}>
-                        {isColor && on && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setPrimary(tag.id); }}
-                            title={isPrimary ? "Primary color — click to clear" : "Set as primary color"}
-                            style={{
-                              background: isPrimary ? "#f0a500" : C.lift2,
-                              border: "none",
-                              color: isPrimary ? "#212121" : C.muted,
-                              padding: "6px 8px 6px 10px",
-                              fontSize: 12,
-                              cursor: "pointer",
-                              borderRadius: "20px 0 0 20px",
-                              fontFamily: "Inter,sans-serif",
-                              lineHeight: 1,
-                              transition: "all 0.1s",
-                            }}>
-                            {isPrimary ? "★" : "☆"}
-                          </button>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        {look.source_url && (
+                          <a href={look.source_url} target="_blank" rel="noreferrer"
+                            style={{fontSize:12,color:C.text,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,fontWeight:500}}>
+                            ↗ source
+                          </a>
                         )}
-                        <button
-                          className={`tag-btn${on?" on":""}`}
-                          onClick={() => toggleTag(tag.id)}
-                          title={tag.definition || undefined}
-                          style={{
-                            background: on ? C.white : C.lift1,
-                            border: "none",
-                            color: on ? "#212121" : C.text,
-                            padding: "6px 14px",
-                            fontSize: 13,
-                            fontWeight: on ? 600 : 400,
-                            cursor: "pointer",
-                            borderRadius: isColor && on ? "0 20px 20px 0" : 20,
-                            fontFamily: "Inter,sans-serif",
-                            transition: "all 0.1s",
-                            textDecoration: tag.definition ? "underline dotted" : "none",
-                            textUnderlineOffset: 3,
-                          }}>
-                          {tag.name}{on && !isColor ? " ✓" : ""}
-                        </button>
+                        <span style={{fontSize:13,color:C.muted,fontWeight:500}}>
+                          <span style={{color:C.text,fontWeight:600}}>{activeTags.size}</span> tags
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+                    </div>
 
-            {/* Add tag */}
-            <div>
-              <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted,paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
-                New Tag
-              </div>
-              {!showAdd ? (
-                <button onClick={() => setShowAdd(true)}
-                  style={{background:"transparent",border:`1.5px dashed ${C.lift2}`,color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
-                  + Add tag
-                </button>
-              ) : (
-                <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:300}}>
-                  <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Tag name"
-                    onKeyDown={e => e.key==="Enter" && addTag()} autoFocus
-                    style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",fontFamily:"Inter,sans-serif"}}/>
-                  <select value={newType} onChange={e => setNewType(e.target.value)}
-                    style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
-                    <option value="">Select type…</option>
-                    {orderedTypes.map(t => <option key={t} value={t}>{TYPE_LABELS[t]||t}</option>)}
-                  </select>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={addTag} disabled={adding}
-                      style={{background:C.white,border:"none",color:"#212121",padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
-                      {adding ? "…" : "Add & Apply"}
-                    </button>
-                    <button onClick={() => { setShowAdd(false); setNewName(""); setNewType(""); }}
-                      style={{background:C.lift2,border:"none",color:C.muted,padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
-                      Cancel
-                    </button>
+                    {!editingNotes ? (
+                      <div onClick={() => setEditingNotes(true)}
+                        style={{fontSize:14,color:notes?C.text:C.dim,background:C.lift2,borderRadius:10,padding:"8px 12px",cursor:"pointer",lineHeight:1.5,fontStyle:notes?"normal":"italic",maxHeight:72,overflowY:"auto"}}>
+                        {notes || "Add notes…"}
+                      </div>
+                    ) : (
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <textarea value={notes} onChange={e => setNotes(e.target.value)} autoFocus rows={2}
+                          style={{background:"#484848",border:"1.5px solid #fff",color:C.text,padding:"8px 12px",fontSize:14,borderRadius:10,outline:"none",resize:"none",fontFamily:"Inter,sans-serif",lineHeight:1.5,width:"100%"}}
+                        />
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={saveNotes} disabled={savingNotes}
+                            style={{background:C.white,border:"none",color:"#212121",padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                            {savingNotes?"…":"Save"}
+                          </button>
+                          <button onClick={() => { setEditingNotes(false); setNotes(filtered[idx]?.notes||""); }}
+                            style={{background:C.lift2,border:"none",color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:2}}>
+                      <button onClick={prev}
+                        style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===0?0.25:1}}>
+                        ← Prev
+                      </button>
+                      <span style={{fontSize:11,color:C.dim}}>arrow keys</span>
+                      <button onClick={next}
+                        style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===filtered.length-1?0.25:1}}>
+                        Next →
+                      </button>
+                    </div>
                   </div>
-                </div>
+                </>
+              ) : (
+                <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.dim,fontSize:13}}>No looks</div>
               )}
             </div>
+
+            <div style={{flex:1,overflowY:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:20,background:C.bg}}>
+              {orderedTypes.map(type => (
+                <div key={type}>
+                  <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0",paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
+                    {TYPE_LABELS[type]||type}
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {(tagsByType[type]||[]).map(tag => {
+                      const on = activeTags.has(tag.id);
+                      const isColor = type === "color";
+                      const isPrimary = primaryTagId === tag.id;
+                      return (
+                        <div key={tag.id} style={{display:"inline-flex",alignItems:"center",gap:0}}>
+                          {isColor && on && (
+                            <button onClick={e => { e.stopPropagation(); setPrimary(tag.id); }}
+                              title={isPrimary ? "Primary color — click to clear" : "Set as primary color"}
+                              style={{background:isPrimary?"#f0a500":C.lift2,border:"none",color:isPrimary?"#212121":C.muted,padding:"6px 8px 6px 10px",fontSize:12,cursor:"pointer",borderRadius:"20px 0 0 20px",fontFamily:"Inter,sans-serif",lineHeight:1,transition:"all 0.1s"}}>
+                              {isPrimary ? "★" : "☆"}
+                            </button>
+                          )}
+                          <button className={`tag-btn${on?" on":""}`} onClick={() => toggleTag(tag.id)}
+                            title={tag.definition || undefined}
+                            style={{background:on?C.white:C.lift1,border:"none",color:on?"#212121":C.text,padding:"6px 14px",fontSize:13,fontWeight:on?600:400,cursor:"pointer",borderRadius:isColor&&on?"0 20px 20px 0":20,fontFamily:"Inter,sans-serif",transition:"all 0.1s",textDecoration:tag.definition?"underline dotted":"none",textUnderlineOffset:3}}>
+                            {tag.name}{on && !isColor ? " ✓" : ""}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <div>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted,paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
+                  New Tag
+                </div>
+                {!showAdd ? (
+                  <button onClick={() => setShowAdd(true)}
+                    style={{background:"transparent",border:`1.5px dashed ${C.lift2}`,color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                    + Add tag
+                  </button>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:300}}>
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Tag name"
+                      onKeyDown={e => e.key==="Enter" && addTag()} autoFocus
+                      style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",fontFamily:"Inter,sans-serif"}}/>
+                    <select value={newType} onChange={e => setNewType(e.target.value)}
+                      style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+                      <option value="">Select type…</option>
+                      {orderedTypes.map(t => <option key={t} value={t}>{TYPE_LABELS[t]||t}</option>)}
+                    </select>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={addTag} disabled={adding}
+                        style={{background:C.white,border:"none",color:"#212121",padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                        {adding ? "…" : "Add & Apply"}
+                      </button>
+                      <button onClick={() => { setShowAdd(false); setNewName(""); setNewType(""); }}
+                        style={{background:C.lift2,border:"none",color:C.muted,padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
         )}
       </div>
     </>
