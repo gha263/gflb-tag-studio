@@ -454,21 +454,50 @@ export default function IntakePage() {
   async function handleCreateBrand(data: any) {
     let c; try { c = await post("brands", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
     setBrands(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
-    await selectBrand(c); setModal(null);
+    await selectBrand(c);
+    // If a creative director is already in the credits list, link them to this new brand
+    if (!c.id.startsWith("local-") && creditCDs.length > 0) {
+      for (const cd of creditCDs) {
+        if (cd.id.startsWith("local-")) continue;
+        try {
+          // Write brand_directors join row
+          await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
+            method: "POST",
+            headers: { ...H, Prefer: "resolution=merge-duplicates" },
+            body: JSON.stringify({ brand_id: c.id, person_id: cd.id, is_current: true }),
+          });
+          // Write brands.creative_director_id if not already set
+          await fetch(`${SUPABASE_URL}/rest/v1/brands?id=eq.${c.id}`, {
+            method: "PATCH",
+            headers: { ...H, Prefer: "" },
+            body: JSON.stringify({ creative_director_id: cd.id }),
+          });
+        } catch { /* non-fatal */ }
+      }
+    }
+    setModal(null);
   }
+
   async function handleCreatePerson(data: any) {
     let c; try { c = await post("people", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
     const role = modal?.role;
     if (role === "creative_director") {
       setCreditCDs(prev => [...prev, c]);
-      // If a brand is already selected and the person was saved to DB, write the brand_directors link
+      // If a brand is already selected and both are in DB, write all connections
       if (brand?.id && !brand.id.startsWith("local-") && !c.id.startsWith("local-")) {
         try {
+          // Write brand_directors join row
           await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
             method: "POST",
             headers: { ...H, Prefer: "resolution=merge-duplicates" },
             body: JSON.stringify({ brand_id: brand.id, person_id: c.id, is_current: true }),
+          });
+          // Write brands.creative_director_id
+          await fetch(`${SUPABASE_URL}/rest/v1/brands?id=eq.${brand.id}`, {
+            method: "PATCH",
+            headers: { ...H, Prefer: "" },
+            body: JSON.stringify({ creative_director_id: c.id }),
           });
         } catch { /* non-fatal */ }
       }
