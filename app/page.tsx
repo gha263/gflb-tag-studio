@@ -413,14 +413,14 @@ const setPrimary = async (tagId: string) => {
         // PATCH would match zero rows and silently no-op while the UI still
         // optimistically lit up the star. This creates the human row if it's
         // missing, or updates it if it's already there, either way it lands.
-        await sb("entity_tags", {
-          method: "POST",
-          body: JSON.stringify({
-            entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human",
-            is_primary: true, is_primary_confirmed: true,
-          }),
-          prefer: "resolution=merge-duplicates",
-        });
+await sb("entity_tags?on_conflict=entity_id,tag_id,source", {
+  method: "POST",
+  body: JSON.stringify({
+    entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human",
+    is_primary: true, is_primary_confirmed: true,
+  }),
+  prefer: "resolution=merge-duplicates",
+});
         const newHuman = new Set(humanTagIds);
         newHuman.add(tagId);
         setHumanTagIds(newHuman);
