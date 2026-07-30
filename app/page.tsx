@@ -397,7 +397,7 @@ export default function TagStudio() {
     setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
   };
 
-  const setPrimary = async (tagId: string) => {
+const setPrimary = async (tagId: string) => {
     const look = filtered[idx];
     if (!look) return;
     setSaving(true);
@@ -408,9 +408,25 @@ export default function TagStudio() {
       if (primaryTagId === tagId) {
         setPrimaryTagId(null);
       } else {
-        await sb(`entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`, {
-          method:"PATCH", prefer:"", body: JSON.stringify({ is_primary: true, is_primary_confirmed: true }),
+        // Upsert, not PATCH -- the tag being starred may only exist as an
+        // AI-approved suggestion with no source='human' row yet. A plain
+        // PATCH would match zero rows and silently no-op while the UI still
+        // optimistically lit up the star. This creates the human row if it's
+        // missing, or updates it if it's already there, either way it lands.
+        await sb("entity_tags", {
+          method: "POST",
+          body: JSON.stringify({
+            entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human",
+            is_primary: true, is_primary_confirmed: true,
+          }),
+          prefer: "resolution=merge-duplicates",
         });
+        const newHuman = new Set(humanTagIds);
+        newHuman.add(tagId);
+        setHumanTagIds(newHuman);
+        const nextActive = new Set(activeTags);
+        nextActive.add(tagId);
+        setActiveTags(nextActive);
         setPrimaryTagId(tagId);
       }
     } catch(e) { console.error(e); }
