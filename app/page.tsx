@@ -259,9 +259,12 @@ export default function TagStudio() {
   };
 
   const loadTags = async (lookId: string) => {
-    const data = await sb(
-      `entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,is_primary,source,status`
-    );
+    // Primary color lives on looks.primary_color_tag_id (scalar column) now.
+    // Entity_tags is only queried for active/human/AI membership.
+    const [data, lookRows] = await Promise.all([
+      sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,source,status`),
+      sb(`looks?id=eq.${lookId}&select=primary_color_tag_id`),
+    ]);
     const human = new Set<string>(
       data.filter((t: any) => t.source === "human").map((t: any) => t.tag_id)
     );
@@ -271,8 +274,7 @@ export default function TagStudio() {
     setHumanTagIds(human);
     setAiApprovedTagIds(aiApproved);
     setActiveTags(new Set<string>([...human, ...aiApproved]));
-    const primary = data.find((t: any) => t.is_primary);
-    setPrimaryTagId(primary?.tag_id || null);
+    setPrimaryTagId(lookRows?.[0]?.primary_color_tag_id ?? null);
   };
 
   const toggleTag = async (tagId: string) => {
@@ -292,7 +294,14 @@ export default function TagStudio() {
         const newHuman = new Set(humanTagIds);
         newHuman.delete(tagId);
         setHumanTagIds(newHuman);
-        if (primaryTagId === tagId) setPrimaryTagId(null);
+        if (primaryTagId === tagId) {
+          // If this was the primary color, clear looks.primary_color_tag_id too
+          await sb(`looks?id=eq.${look.id}`, {
+            method: "PATCH", prefer: "",
+            body: JSON.stringify({ primary_color_tag_id: null }),
+          });
+          setPrimaryTagId(null);
+        }
 
         if (!isAI) {
           // No AI fallback — remove entirely from active
@@ -392,43 +401,33 @@ export default function TagStudio() {
           });
         }
       }
-      if (primaryTagId === tagId) setPrimaryTagId(null);
+      if (primaryTagId === tagId) {
+        // If the rejected color was primary, clear looks.primary_color_tag_id too
+        await sb(`looks?id=eq.${look.id}`, {
+          method: "PATCH", prefer: "",
+          body: JSON.stringify({ primary_color_tag_id: null }),
+        });
+        setPrimaryTagId(null);
+      }
     } catch(e) { console.error(e); }
     setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
   };
 
-const setPrimary = async (tagId: string) => {
+  const setPrimary = async (tagId: string) => {
     const look = filtered[idx];
     if (!look) return;
     setSaving(true);
     try {
-      await sb(`entity_tags?entity_id=eq.${look.id}&entity_type=eq.look&source=eq.human&is_primary=eq.true`, {
-        method:"PATCH", prefer:"", body: JSON.stringify({ is_primary: false, is_primary_confirmed: false }),
+      // Toggle: click starred = clear, click unstarred = set.
+      // primary_color_tag_id is a scalar column on `looks` — the single source
+      // of truth for a look's primary color. Legacy entity_tags is_primary /
+      // is_primary_confirmed flags are no longer written or read.
+      const newPrimary = primaryTagId === tagId ? null : tagId;
+      await sb(`looks?id=eq.${look.id}`, {
+        method: "PATCH", prefer: "",
+        body: JSON.stringify({ primary_color_tag_id: newPrimary }),
       });
-      if (primaryTagId === tagId) {
-        setPrimaryTagId(null);
-      } else {
-        // Upsert, not PATCH -- the tag being starred may only exist as an
-        // AI-approved suggestion with no source='human' row yet. A plain
-        // PATCH would match zero rows and silently no-op while the UI still
-        // optimistically lit up the star. This creates the human row if it's
-        // missing, or updates it if it's already there, either way it lands.
-await sb("entity_tags?on_conflict=entity_id,tag_id,source", {
-  method: "POST",
-  body: JSON.stringify({
-    entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human",
-    is_primary: true, is_primary_confirmed: true,
-  }),
-  prefer: "resolution=merge-duplicates",
-});
-        const newHuman = new Set(humanTagIds);
-        newHuman.add(tagId);
-        setHumanTagIds(newHuman);
-        const nextActive = new Set(activeTags);
-        nextActive.add(tagId);
-        setActiveTags(nextActive);
-        setPrimaryTagId(tagId);
-      }
+      setPrimaryTagId(newPrimary);
     } catch(e) { console.error(e); }
     setSaving(false);
   };
