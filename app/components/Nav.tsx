@@ -34,7 +34,6 @@ export default function Nav() {
       {link("/", "Tag Studio")}
       {link("/intake", "Intake")}
       {link("/review", "Review")}
-      {link("/frames", "Frames")}
     </nav>
   );
 }
