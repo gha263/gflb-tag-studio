@@ -334,8 +334,12 @@ type Look = {
   brands_display: string; brand_count: number; credit_count: number; tag_count: number;
 };
 
-type Contributor = { key: string; role: any; person: any };
-type BrandRow = { key: string; brand: any; isCourtesy: boolean };
+// dbId: the row's real look_credits/look_brand_credits id when loaded from
+// the database, null for rows added in this editing session. Used by
+// saveEdits to know exactly which old rows to remove after the new set
+// has been written successfully — never delete-then-hope-insert-works.
+type Contributor = { key: string; role: any; person: any; dbId?: string | null };
+type BrandRow = { key: string; brand: any; isCourtesy: boolean; dbId?: string | null };
 
 let contributorClipboard: { person: any; role: any }[] = [];
 
@@ -352,6 +356,7 @@ export default function ReviewQueue() {
   });
   const [selected, setSelected] = useState<Look | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sceneFilter, setSceneFilter] = useState("");
   const [pubFilter, setPubFilter] = useState("");
@@ -462,17 +467,18 @@ export default function ReviewQueue() {
     ]);
     setBrandRows((bRows || [])
       .filter((r: any) => r.brands)
-      .map((r: any, i: number) => ({ key: `b-${r.id}-${i}`, brand: r.brands, isCourtesy: !!r.is_courtesy })));
+      .map((r: any, i: number) => ({ key: `b-${r.id}-${i}`, brand: r.brands, isCourtesy: !!r.is_courtesy, dbId: r.id })));
 
     const roleByName = (name: string) => creditRoles.find(r => r.name === name) || { id: `adhoc-${name}`, name, slug: slugify(name), sort_order: 999 };
     setContributors((credits || [])
       .filter((c: any) => c.people)
-      .map((c: any, i: number) => ({ key: `c-${c.id}-${i}`, role: roleByName(c.role), person: c.people, ingest_handle: c.ingest_handle })));
+      .map((c: any, i: number) => ({ key: `c-${c.id}-${i}`, role: roleByName(c.role), person: c.people, ingest_handle: c.ingest_handle, dbId: c.id })));
   };
 
   const selectLook = (look: Look) => {
     setSelected(look);
     setDeleteError(null);
+    setSaveError(null);
     setEditScene(look.scene || "");
     setEditGender(look.gender || "");
     setEditSeasonTerm(look.season_term || "");
@@ -607,8 +613,18 @@ export default function ReviewQueue() {
   const saveEdits = async () => {
     if (!selected) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const validBrandRows = brandRows.filter(b => b.brand?.id);
+
+      // Any option in the Scene dropdown must match the looks.scene CHECK
+      // constraint exactly, or Postgres rejects the whole PATCH. Catch that
+      // here with a clear message instead of a bare 400 from Postgres.
+      const ALLOWED_SCENES = ["runway", "street", "editorial", "designer_showcase", "lookbook", "presentation", "campaign", "portrait", "behind_the_scenes", "installation", "other"];
+      if (editScene && !ALLOWED_SCENES.includes(editScene)) {
+        throw new Error(`"${editScene}" is not a valid scene value.`);
+      }
+
       await sb(`looks?id=eq.${selected.id}`, {
         method: "PATCH", prefer: "",
         body: JSON.stringify({
@@ -631,19 +647,41 @@ export default function ReviewQueue() {
           is_key_look: editKeyLook,
         }),
       });
-      await sb(`look_brand_credits?look_id=eq.${selected.id}`, { method: "DELETE", prefer: "" });
+
+      // Write the new credit sets BEFORE deleting the old ones. If a POST
+      // here fails, the previously-saved credits are still intact — we
+      // only delete specific old row ids once their replacements are
+      // confirmed written, never the whole set up front.
+      const oldBrandCreditIds = brandRows.map(b => b.dbId).filter(Boolean);
+      const oldPersonCreditIds = contributors.map(c => c.dbId).filter(Boolean);
+
       if (validBrandRows.length > 0) {
         await sb("look_brand_credits", { method: "POST", body: JSON.stringify(validBrandRows.map((b, i) => ({ look_id: selected.id, brand_id: b.brand.id, role: null, credit_order: i, is_courtesy: b.isCourtesy }))) });
       }
-      await sb(`look_credits?look_id=eq.${selected.id}`, { method: "DELETE", prefer: "" });
+      if (oldBrandCreditIds.length > 0) {
+        await sb(`look_brand_credits?id=in.(${oldBrandCreditIds.join(",")})`, { method: "DELETE", prefer: "" });
+      }
+
       const newCredits = contributors
         .filter(c => c.person?.id && c.role)
         .map((c, i) => ({ look_id: selected.id, person_id: c.person.id, role: c.role.name, credit_order: i }));
+      const droppedContributors = contributors.filter(c => c.person?.id && !c.role);
       if (newCredits.length > 0) {
         await sb("look_credits", { method: "POST", body: JSON.stringify(newCredits) });
       }
+      if (oldPersonCreditIds.length > 0) {
+        await sb(`look_credits?id=in.(${oldPersonCreditIds.join(",")})`, { method: "DELETE", prefer: "" });
+      }
+
+      if (droppedContributors.length > 0) {
+        setSaveError(`Saved, but skipped (no role selected): ${droppedContributors.map(c => c.person.name).join(", ")}`);
+      }
+
       await loadLooks();
-    } catch(e) { console.error(e); }
+    } catch(e: any) {
+      console.error(e);
+      setSaveError(e?.message || "Save failed — changes were not persisted.");
+    }
     setSaving(false);
   };
 
@@ -728,12 +766,15 @@ export default function ReviewQueue() {
             style={{ background: sceneFilter ? C.lift3 : C.lift2, border: "none", color: sceneFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif" }}>
             <option value="">Scene</option>
             <option value="runway">Runway</option>
-            <option value="backstage">Backstage</option>
+            <option value="behind_the_scenes">Backstage</option>
             <option value="street">Street</option>
             <option value="editorial">Editorial</option>
             <option value="designer_showcase">Designer Showcase</option>
             <option value="lookbook">Lookbook</option>
             <option value="presentation">Presentation</option>
+            <option value="campaign">Campaign</option>
+            <option value="portrait">Portrait</option>
+            <option value="installation">Installation</option>
             <option value="other">Other</option>
           </select>
           <select value={pubFilter} onChange={e => setPubFilter(e.target.value)}
@@ -934,12 +975,15 @@ export default function ReviewQueue() {
                     <select value={editScene} onChange={e => setEditScene(e.target.value)} style={sel}>
                       <option value="">— select —</option>
                       <option value="runway">Runway</option>
-                      <option value="backstage">Backstage</option>
+                      <option value="behind_the_scenes">Backstage</option>
                       <option value="street">Street</option>
                       <option value="editorial">Editorial</option>
                       <option value="designer_showcase">Designer Showcase</option>
                       <option value="lookbook">Lookbook</option>
                       <option value="presentation">Presentation</option>
+                      <option value="campaign">Campaign</option>
+                      <option value="portrait">Portrait</option>
+                      <option value="installation">Installation</option>
                       <option value="other">Other</option>
                     </select>
                   </F>
@@ -1043,11 +1087,16 @@ export default function ReviewQueue() {
                 )}
 
                 {/* Save — form fields only, status actions are at the top */}
-                <div style={{ paddingBottom: 20 }}>
+                <div style={{ paddingBottom: 20, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
                   <button onClick={saveEdits} disabled={saving}
                     style={{ background: C.white, border: "none", color: "#212121", padding: "9px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving ? 0.5 : 1 }}>
                     {saving ? "Saving…" : "Save changes"}
                   </button>
+                  {saveError && (
+                    <span style={{ fontSize: 12, color: saveError.startsWith("Saved,") ? C.amber : C.red, maxWidth: 480 }}>
+                      {saveError.startsWith("Saved,") ? "⚠ " : "✕ "}{saveError}
+                    </span>
+                  )}
                 </div>
 
               </div>
