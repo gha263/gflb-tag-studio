@@ -372,6 +372,13 @@ export default function ReviewQueue() {
   const [brandRows, setBrandRows] = useState<BrandRow[]>([]);
   const [editIsCollab, setEditIsCollab] = useState(false);
   const [contributors, setContributors] = useState<Contributor[]>([]);
+  // Immutable snapshots of what's in the DB, captured at loadDetail time.
+  // saveEdits diffs the editable state against these instead of blindly
+  // deleting-and-reinserting everything, so re-saving unchanged credits
+  // doesn't collide with the unique(look_id, brand_id/person_id, role)
+  // constraints, and a mid-save failure can't wipe rows that never changed.
+  const [originalBrandCredits, setOriginalBrandCredits] = useState<{ dbId: string; brandId: string; role: string | null }[]>([]);
+  const [originalCredits, setOriginalCredits] = useState<{ dbId: string; personId: string; role: string }[]>([]);
 
   const [editScene, setEditScene] = useState("");
   const [editGender, setEditGender] = useState("");
@@ -462,9 +469,19 @@ export default function ReviewQueue() {
 
   const loadDetail = async (lookId: string) => {
     const [bRows, credits] = await Promise.all([
-      sb(`look_brand_credits?look_id=eq.${lookId}&select=id,brand_id,credit_order,is_courtesy,brands(id,name)&order=credit_order`),
+      sb(`look_brand_credits?look_id=eq.${lookId}&select=id,brand_id,role,credit_order,is_courtesy,brands(id,name)&order=credit_order`),
       sb(`look_credits?look_id=eq.${lookId}&select=id,role,person_id,credit_order,ingest_handle,people(id,name,primary_role)&order=credit_order`),
     ]);
+    // Snapshot of what's actually in the DB right now, captured once at load
+    // time and never mutated by editing — this is what saveEdits diffs
+    // against. brandRows/contributors below are the editable copies.
+    setOriginalBrandCredits((bRows || [])
+      .filter((r: any) => r.brands)
+      .map((r: any) => ({ dbId: r.id as string, brandId: r.brand_id as string, role: (r.role ?? null) as string | null })));
+    setOriginalCredits((credits || [])
+      .filter((c: any) => c.people)
+      .map((c: any) => ({ dbId: c.id as string, personId: c.person_id as string, role: c.role as string })));
+
     setBrandRows((bRows || [])
       .filter((r: any) => r.brands)
       .map((r: any, i: number) => ({ key: `b-${r.id}-${i}`, brand: r.brands, isCourtesy: !!r.is_courtesy, dbId: r.id })));
@@ -648,34 +665,86 @@ export default function ReviewQueue() {
         }),
       });
 
-      // Write the new credit sets BEFORE deleting the old ones. If a POST
-      // here fails, the previously-saved credits are still intact — we
-      // only delete specific old row ids once their replacements are
-      // confirmed written, never the whole set up front.
-      const oldBrandCreditIds = brandRows.map(b => b.dbId).filter(Boolean);
-      const oldPersonCreditIds = contributors.map(c => c.dbId).filter(Boolean);
+      // Reconcile credits by identity — (brand_id, role) and (person_id,
+      // role) are exactly the columns the DB's unique constraints key on.
+      // Diff against the snapshot taken at load time (originalBrandCredits /
+      // originalCredits), which never mutates as the form is edited:
+      //   - a desired tuple with no existing match  → INSERT
+      //   - an existing tuple with no desired match → DELETE (by its dbId)
+      //   - a tuple present in both                 → PATCH order/courtesy only
+      // Unchanged rows are never re-inserted, so re-saving without touching
+      // credits can't collide with the row that's already sitting there —
+      // the bug that produced the "duplicate key value" error.
+      const bKey = (brandId: string, role: string | null) => `${brandId}::${role ?? ""}`;
+      const cKey = (personId: string, role: string) => `${personId}::${role}`;
 
-      if (validBrandRows.length > 0) {
-        await sb("look_brand_credits", { method: "POST", body: JSON.stringify(validBrandRows.map((b, i) => ({ look_id: selected.id, brand_id: b.brand.id, role: null, credit_order: i, is_courtesy: b.isCourtesy }))) });
+      // ---- Brand credits ----
+      const existingBrandByKey = new Map(originalBrandCredits.map(r => [bKey(r.brandId, r.role), r.dbId]));
+      const desiredBrandByKey = new Map<string, { brandId: string; role: null; isCourtesy: boolean; order: number }>();
+      validBrandRows.forEach((b, i) => {
+        desiredBrandByKey.set(bKey(b.brand.id, null), { brandId: b.brand.id, role: null, isCourtesy: b.isCourtesy, order: i });
+      });
+
+      const brandsToInsert = [...desiredBrandByKey.entries()].filter(([key]) => !existingBrandByKey.has(key));
+      const brandsToUpdate = [...desiredBrandByKey.entries()].filter(([key]) => existingBrandByKey.has(key));
+      const brandDbIdsToDelete = [...existingBrandByKey.keys()].filter(key => !desiredBrandByKey.has(key)).map(key => existingBrandByKey.get(key)!);
+
+      if (brandsToInsert.length > 0) {
+        await sb("look_brand_credits", { method: "POST", body: JSON.stringify(
+          brandsToInsert.map(([, row]) => ({ look_id: selected.id, brand_id: row.brandId, role: row.role, credit_order: row.order, is_courtesy: row.isCourtesy }))
+        ) });
       }
-      if (oldBrandCreditIds.length > 0) {
-        await sb(`look_brand_credits?id=in.(${oldBrandCreditIds.join(",")})`, { method: "DELETE", prefer: "" });
+      for (const [key, row] of brandsToUpdate) {
+        await sb(`look_brand_credits?id=eq.${existingBrandByKey.get(key)}`, { method: "PATCH", prefer: "", body: JSON.stringify({ credit_order: row.order, is_courtesy: row.isCourtesy }) });
+      }
+      if (brandDbIdsToDelete.length > 0) {
+        await sb(`look_brand_credits?id=in.(${brandDbIdsToDelete.join(",")})`, { method: "DELETE", prefer: "" });
       }
 
-      const newCredits = contributors
-        .filter(c => c.person?.id && c.role)
-        .map((c, i) => ({ look_id: selected.id, person_id: c.person.id, role: c.role.name, credit_order: i }));
+      // ---- Person credits ----
+      const existingCreditByKey = new Map(originalCredits.map(r => [cKey(r.personId, r.role), r.dbId]));
+      const desiredCreditByKey = new Map<string, { personId: string; role: string; order: number }>();
+      const validContributors = contributors.filter(c => c.person?.id && c.role);
+      validContributors.forEach((c, i) => {
+        desiredCreditByKey.set(cKey(c.person.id, c.role.name), { personId: c.person.id, role: c.role.name, order: i });
+      });
+      // Two contributor rows resolving to the same (person, role) collapse
+      // into one write — there's nothing distinguishing them for the DB to
+      // keep separately, and this is what used to surface as a raw
+      // "duplicate key value" Postgres error instead of just being handled.
+      const keyCounts = new Map<string, number>();
+      validContributors.forEach(c => { const k = cKey(c.person.id, c.role.name); keyCounts.set(k, (keyCounts.get(k) || 0) + 1); });
+      const mergedDuplicates = [...new Set(
+        validContributors.filter(c => (keyCounts.get(cKey(c.person.id, c.role.name)) || 0) > 1)
+          .map(c => `${c.person.name} (${c.role.name})`)
+      )];
+
+      const creditsToInsert = [...desiredCreditByKey.entries()].filter(([key]) => !existingCreditByKey.has(key));
+      const creditsToUpdate = [...desiredCreditByKey.entries()].filter(([key]) => existingCreditByKey.has(key));
+      const creditDbIdsToDelete = [...existingCreditByKey.keys()].filter(key => !desiredCreditByKey.has(key)).map(key => existingCreditByKey.get(key)!);
+
+      if (creditsToInsert.length > 0) {
+        await sb("look_credits", { method: "POST", body: JSON.stringify(
+          creditsToInsert.map(([, row]) => ({ look_id: selected.id, person_id: row.personId, role: row.role, credit_order: row.order }))
+        ) });
+      }
+      for (const [key, row] of creditsToUpdate) {
+        await sb(`look_credits?id=eq.${existingCreditByKey.get(key)}`, { method: "PATCH", prefer: "", body: JSON.stringify({ credit_order: row.order }) });
+      }
+      if (creditDbIdsToDelete.length > 0) {
+        await sb(`look_credits?id=in.(${creditDbIdsToDelete.join(",")})`, { method: "DELETE", prefer: "" });
+      }
+
       const droppedContributors = contributors.filter(c => c.person?.id && !c.role);
-      if (newCredits.length > 0) {
-        await sb("look_credits", { method: "POST", body: JSON.stringify(newCredits) });
-      }
-      if (oldPersonCreditIds.length > 0) {
-        await sb(`look_credits?id=in.(${oldPersonCreditIds.join(",")})`, { method: "DELETE", prefer: "" });
-      }
+      const notes: string[] = [];
+      if (droppedContributors.length > 0) notes.push(`skipped (no role selected): ${droppedContributors.map(c => c.person.name).join(", ")}`);
+      if (mergedDuplicates.length > 0) notes.push(`merged duplicate rows: ${mergedDuplicates.join(", ")}`);
+      if (notes.length > 0) setSaveError(`Saved, but ${notes.join(" · ")}`);
 
-      if (droppedContributors.length > 0) {
-        setSaveError(`Saved, but skipped (no role selected): ${droppedContributors.map(c => c.person.name).join(", ")}`);
-      }
+      // Refresh the snapshot (not just the list) so a second save in the
+      // same session diffs against what's actually in the DB now, not
+      // against the state from before this save.
+      await loadDetail(selected.id);
 
       await loadLooks();
     } catch(e: any) {
