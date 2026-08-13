@@ -462,6 +462,7 @@ export default function IntakePage() {
   const [modal, setModal] = useState<any>(null);
   const [status, setStatus] = useState("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [warnMsg, setWarnMsg] = useState("");
   const [successCount, setSuccessCount] = useState(0);
 
   useEffect(() => {
@@ -638,7 +639,7 @@ export default function IntakePage() {
 
   async function handleSubmit() {
     if (!cdnUrl.trim()) { setStatus("error"); setErrorMsg("CDN image URL is required."); return; }
-    setStatus("submitting"); setErrorMsg("");
+    setStatus("submitting"); setErrorMsg(""); setWarnMsg("");
 
     const cleanId = (x: any) => (x?.id && !x.id.startsWith("local-") ? x.id : null);
     const validBrandRows = brandRows.filter(b => cleanId(b.brand));
@@ -671,6 +672,10 @@ export default function IntakePage() {
       if (!res.ok) throw new Error(await res.text());
       const lookId = (await res.json())[0]?.id;
 
+      // Collect problems instead of assuming success — a look that's created
+      // but missing credits is a silent data gap, not a successful ingest.
+      const warnings: string[] = [];
+
       const brandCredits = validBrandRows.map((b, i) => ({
         look_id: lookId,
         brand_id: cleanId(b.brand)!,
@@ -679,26 +684,44 @@ export default function IntakePage() {
         is_courtesy: b.isCourtesy,
       }));
       if (brandCredits.length > 0) {
-        await fetch(`${SUPABASE_URL}/rest/v1/look_brand_credits`, {
+        const bcRes = await fetch(`${SUPABASE_URL}/rest/v1/look_brand_credits`, {
           method: "POST",
           headers: { ...H, "Prefer": "return=representation" },
           body: JSON.stringify(brandCredits),
         });
+        if (!bcRes.ok) warnings.push(`Brand credits failed to save: ${await bcRes.text()}`);
+      }
+
+      // Contributors get dropped from the credits write for two reasons —
+      // surface both instead of letting them vanish silently.
+      const missingRole = contributors.filter(c => c.person && !c.person.id?.startsWith("local-") && !c.role);
+      if (missingRole.length > 0) {
+        warnings.push(`Skipped (no role selected): ${missingRole.map(c => c.person.name).join(", ")}`);
+      }
+      const unsavedPerson = contributors.filter(c => c.person?.id?.startsWith("local-"));
+      if (unsavedPerson.length > 0) {
+        warnings.push(`Skipped (person record failed to save): ${unsavedPerson.map(c => c.person.name).join(", ")}`);
       }
 
       const credits = contributors
         .filter(c => c.person && !c.person.id?.startsWith("local-") && c.role)
         .map((c, i) => ({ look_id: lookId, person_id: c.person.id, role: c.role.name, credit_order: i }));
       if (credits.length > 0) {
-        await fetch(`${SUPABASE_URL}/rest/v1/look_credits`, {
+        const ccRes = await fetch(`${SUPABASE_URL}/rest/v1/look_credits`, {
           method: "POST",
           headers: { ...H, "Prefer": "return=representation" },
           body: JSON.stringify(credits),
         });
+        if (!ccRes.ok) warnings.push(`Person credits failed to save: ${await ccRes.text()}`);
       }
 
-      setStatus("success");
-      setSuccessCount(c => c + 1);
+      if (warnings.length > 0) {
+        setStatus("warning");
+        setWarnMsg(warnings.join(" · "));
+      } else {
+        setStatus("success");
+        setSuccessCount(c => c + 1);
+      }
       resetForm();
     } catch (e: any) {
       setStatus("error");
@@ -849,12 +872,15 @@ export default function IntakePage() {
                 <select style={s.select} value={scene} onChange={e => setScene(e.target.value)}>
                   <option value="">— select —</option>
                   <option value="runway">Runway</option>
-                  <option value="backstage">Backstage</option>
+                  <option value="behind_the_scenes">Backstage</option>
                   <option value="street">Street</option>
                   <option value="editorial">Editorial</option>
                   <option value="designer_showcase">Designer Showcase</option>
                   <option value="lookbook">Lookbook</option>
                   <option value="presentation">Presentation</option>
+                  <option value="campaign">Campaign</option>
+                  <option value="portrait">Portrait</option>
+                  <option value="installation">Installation</option>
                   <option value="other">Other</option>
                 </select>
               </F>
@@ -897,6 +923,7 @@ export default function IntakePage() {
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 14, paddingTop: 4 }}>
             {errorMsg && <span style={{ fontSize: 13, color: C.red }}>{errorMsg}</span>}
+            {warnMsg && <span style={{ fontSize: 13, color: C.amber, maxWidth: 420, textAlign: "right" }}>⚠ Look created, but: {warnMsg}</span>}
             {status === "success" && <span style={{ fontSize: 13, color: C.green }}>✓ Ingested — Cloudinary processing</span>}
             {successCount > 0 && <span style={{ fontSize: 13, color: C.muted }}>{successCount} ingested</span>}
             <button
