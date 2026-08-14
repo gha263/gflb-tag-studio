@@ -557,39 +557,66 @@ export default function IntakePage() {
 
   async function createRole(name: string, rowKey: string) {
     const slug = slugify(name);
-    let created;
-    try { created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 }); }
-    catch { created = { id: `local-${Date.now()}`, name: name.trim().toLowerCase(), slug, sort_order: 999 }; }
-    setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-    updateContributorRole(rowKey, created);
+    try {
+      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
+      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
+      updateContributorRole(rowKey, created);
+    } catch (e: any) {
+      // Do NOT fabricate a local-* role on failure. A fake id here silently
+      // poisons contributor state; look_credits INSERT later fails with an
+      // FK error that reads as if the whole ingest is broken. Surface the
+      // create error immediately; the role field stays empty so the user
+      // can pick an existing role or retry.
+      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
+    }
   }
 
-  async function createRoleForModal(name: string) {
+  async function createRoleForModal(name: string): Promise<any> {
     const slug = slugify(name);
-    let created;
-    try { created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 }); }
-    catch { created = { id: `local-${Date.now()}`, name: name.trim().toLowerCase(), slug, sort_order: 999 }; }
-    setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-    return created;
+    try {
+      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
+      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
+      return created;
+    } catch (e: any) {
+      // Same reasoning as createRole. Return null; caller's
+      // `if (created) setSelectedRole(created)` handles null cleanly.
+      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
+      return null;
+    }
   }
 
-  async function handleCreateBrand(data: any) {
-    let c; try { c = await post("brands", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
-    setBrands(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
-    if (modal?.target?.startsWith("brandrow:")) updateBrandRow(modal.target.split(":")[1], c);
+  async function handleCreateBrand(created: any) {
+    // CreateBrandModal already POSTed the brand AND linked the CD before
+    // calling onSave. Previously this function tried to POST the same brand
+    // AGAIN via post("brands", data) — hit the unique constraint on slug,
+    // the catch swallowed it, and a fake local-* brand replaced the real one
+    // in state. Any look built against that fake brand then failed at save
+    // with an FK error. Just merge the already-created brand into state.
+    setBrands(p => [...p, created].sort((a: any, b: any) => a.name.localeCompare(b.name)));
+    if (modal?.target?.startsWith("brandrow:")) updateBrandRow(modal.target.split(":")[1], created);
     setModal(null);
   }
 
   async function handleCreatePerson(data: any) {
     const { brand: brandData, noBrandConfirmed, ...personData } = data;
     if (noBrandConfirmed) personData.no_brand_confirmed_at = new Date().toISOString();
-    let c; try { c = await post("people", personData); } catch { c = { ...personData, id: `local-${Date.now()}` }; }
+
+    let c;
+    try {
+      c = await post("people", personData);
+    } catch (e: any) {
+      // Do NOT fabricate a local-* person. A fake id here would silently
+      // poison state and cause an FK error at look-save time disconnected
+      // from this create. Surface the error and bail; user can retry.
+      alert(`Couldn't create person "${personData.name}": ${e?.message || "unknown error"}`);
+      return;
+    }
     setPeople(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
 
     // Designer + brand specified → create/link the brand so this person is
     // never left floating with no brand_directors row. Mirrors handleSave
     // in CreateBrandModal, just in the opposite direction.
-    if (brandData && c.id && !c.id.startsWith("local-")) {
+    if (brandData && c.id) {
       try {
         let brandId = brandData.isNew ? null : brandData.id;
         if (brandData.isNew && brandData.name) {
@@ -616,15 +643,29 @@ export default function IntakePage() {
   }
 
   async function handleCreateEvent(data: any) {
-    let c; try { c = await post("events", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
+    let c;
+    try {
+      c = await post("events", data);
+    } catch (e: any) {
+      alert(`Couldn't create event "${data.name}": ${e?.message || "unknown error"}`);
+      return;
+    }
     setEvents(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
-    setEvent(c); setModal(null);
+    setEvent(c);
+    setModal(null);
   }
 
   async function handleCreatePublication(data: any) {
-    let c; try { c = await post("publications", data); } catch { c = { ...data, id: `local-${Date.now()}` }; }
+    let c;
+    try {
+      c = await post("publications", data);
+    } catch (e: any) {
+      alert(`Couldn't create publication "${data.name}": ${e?.message || "unknown error"}`);
+      return;
+    }
     setPublications(p => [...p, c].sort((a: any, b: any) => a.name.localeCompare(b.name)));
-    setPublication(c); setModal(null);
+    setPublication(c);
+    setModal(null);
   }
 
   async function post(path: string, data: any) {
@@ -692,8 +733,11 @@ export default function IntakePage() {
         if (!bcRes.ok) warnings.push(`Brand credits failed to save: ${await bcRes.text()}`);
       }
 
-      // Contributors get dropped from the credits write for two reasons —
-      // surface both instead of letting them vanish silently.
+      // Contributors get dropped from the credits write for three reasons —
+      // surface all three instead of letting them vanish silently. The
+      // create* helpers no longer fabricate local-* ids, but the filters
+      // stay in place as belt-and-suspenders in case anything leaks in from
+      // an older session or a code path we missed.
       const missingRole = contributors.filter(c => c.person && !c.person.id?.startsWith("local-") && !c.role);
       if (missingRole.length > 0) {
         warnings.push(`Skipped (no role selected): ${missingRole.map(c => c.person.name).join(", ")}`);
@@ -702,9 +746,13 @@ export default function IntakePage() {
       if (unsavedPerson.length > 0) {
         warnings.push(`Skipped (person record failed to save): ${unsavedPerson.map(c => c.person.name).join(", ")}`);
       }
+      const unsavedRole = contributors.filter(c => c.person && !c.person.id?.startsWith("local-") && c.role?.id?.startsWith("local-"));
+      if (unsavedRole.length > 0) {
+        warnings.push(`Skipped (role failed to save): ${unsavedRole.map(c => `"${c.role.name}" on ${c.person.name}`).join(", ")}`);
+      }
 
       const credits = contributors
-        .filter(c => c.person && !c.person.id?.startsWith("local-") && c.role)
+        .filter(c => c.person && !c.person.id?.startsWith("local-") && c.role && !c.role.id?.startsWith("local-"))
         .map((c, i) => ({ look_id: lookId, person_id: c.person.id, role: c.role.name, credit_order: i }));
       if (credits.length > 0) {
         const ccRes = await fetch(`${SUPABASE_URL}/rest/v1/look_credits`, {
