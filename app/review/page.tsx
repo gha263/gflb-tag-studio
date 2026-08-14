@@ -486,7 +486,16 @@ export default function ReviewQueue() {
       .filter((r: any) => r.brands)
       .map((r: any, i: number) => ({ key: `b-${r.id}-${i}`, brand: r.brands, isCourtesy: !!r.is_courtesy, dbId: r.id })));
 
-    const roleByName = (name: string) => creditRoles.find(r => r.name === name) || { id: `adhoc-${name}`, name, slug: slugify(name), sort_order: 999 };
+    // A role name on look_credits that doesn't map to a current credit_roles
+    // entry is a data anomaly — leave the contributor row's role empty
+    // (null) so the user can re-select from the typeahead. Previously we
+    // fabricated an "adhoc-*" object here; that fake id survived to
+    // saveEdits and caused the FK error on look_credits INSERT downstream.
+    const roleByName = (name: string) => {
+      const match = creditRoles.find(r => r.name === name);
+      if (!match) console.warn(`[review] Role "${name}" from look_credits not found in credit_roles — contributor row will show empty role for re-selection`);
+      return match || null;
+    };
     setContributors((credits || [])
       .filter((c: any) => c.people)
       .map((c: any, i: number) => ({ key: `c-${c.id}-${i}`, role: roleByName(c.role), person: c.people, ingest_handle: c.ingest_handle, dbId: c.id })));
@@ -611,20 +620,32 @@ export default function ReviewQueue() {
 
   async function createRole(name: string, rowKey: string) {
     const slug = slugify(name);
-    let created;
-    try { created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 }); }
-    catch { created = { id: `local-${Date.now()}`, name: name.trim().toLowerCase(), slug, sort_order: 999 }; }
-    setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-    updateContributorRole(rowKey, created);
+    try {
+      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
+      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
+      updateContributorRole(rowKey, created);
+    } catch (e: any) {
+      // Do NOT fabricate a local-* role on failure. A fake id here silently
+      // poisons contributor state, and the eventual look_credits INSERT
+      // fails with an FK error that reads as if the whole save is broken.
+      // Surface the create error immediately; the role field stays empty
+      // so the user can pick an existing role or retry.
+      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
+    }
   }
 
-  async function createRoleForModal(name: string) {
+  async function createRoleForModal(name: string): Promise<any> {
     const slug = slugify(name);
-    let created;
-    try { created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 }); }
-    catch { created = { id: `local-${Date.now()}`, name: name.trim().toLowerCase(), slug, sort_order: 999 }; }
-    setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-    return created;
+    try {
+      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
+      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
+      return created;
+    } catch (e: any) {
+      // Same reasoning as createRole. Return null; the caller's
+      // `if (created) setSelectedRole(created)` handles null cleanly.
+      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
+      return null;
+    }
   }
 
   const saveEdits = async () => {
@@ -633,6 +654,25 @@ export default function ReviewQueue() {
     setSaveError(null);
     try {
       const validBrandRows = brandRows.filter(b => b.brand?.id);
+
+      // Belt-and-suspenders: guard against any fabricated local-* or adhoc-*
+      // ids that might survive from a prior code path or a stale session
+      // (e.g. state hanging around from before the create* helpers were
+      // fixed to stop fabricating). The create* helpers no longer make
+      // these, but if any leak in, abort BEFORE any write happens so
+      // nothing gets corrupted and the user gets a specific error naming
+      // what needs to be re-selected.
+      const isFake = (id: any) => typeof id === "string" && (id.startsWith("local-") || id.startsWith("adhoc-"));
+      const stalePeople = contributors.filter(c => c.person?.id && isFake(c.person.id));
+      const staleRoles = contributors.filter(c => c.role?.id && isFake(c.role.id));
+      const staleBrands = brandRows.filter(b => b.brand?.id && isFake(b.brand.id));
+      if (stalePeople.length > 0 || staleRoles.length > 0 || staleBrands.length > 0) {
+        const parts: string[] = [];
+        if (stalePeople.length > 0) parts.push(`unsaved people: ${stalePeople.map(c => c.person.name).join(", ")}`);
+        if (staleRoles.length > 0) parts.push(`unsaved roles: ${staleRoles.map(c => `"${c.role.name}"${c.person?.name ? ` (on ${c.person.name})` : ""}`).join(", ")}`);
+        if (staleBrands.length > 0) parts.push(`unsaved brands: ${staleBrands.map(b => b.brand.name).join(", ")}`);
+        throw new Error(`Cannot save — re-select from typeahead: ${parts.join(" · ")}`);
+      }
 
       // Any option in the Scene dropdown must match the looks.scene CHECK
       // constraint exactly, or Postgres rejects the whole PATCH. Catch that
