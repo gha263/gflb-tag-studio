@@ -722,11 +722,10 @@ export default function IntakePage() {
       // but missing credits is a silent data gap, not a successful ingest.
       const warnings: string[] = [];
 
-      const brandCredits = validBrandRows.map((b, i) => ({
+      const brandCredits = validBrandRows.map((b) => ({
         look_id: lookId,
         brand_id: cleanId(b.brand)!,
         role: null,
-        credit_order: i,
         is_courtesy: b.isCourtesy,
       }));
       if (brandCredits.length > 0) {
@@ -758,7 +757,7 @@ export default function IntakePage() {
 
       const credits = contributors
         .filter(c => c.person && !c.person.id?.startsWith("local-") && c.role && !c.role.id?.startsWith("local-"))
-        .map((c, i) => ({ look_id: lookId, person_id: c.person.id, role: c.role.name, credit_order: i }));
+        .map((c) => ({ look_id: lookId, person_id: c.person.id, role: c.role.name }));
       if (credits.length > 0) {
         const ccRes = await fetch(`${SUPABASE_URL}/rest/v1/look_credits`, {
           method: "POST",
