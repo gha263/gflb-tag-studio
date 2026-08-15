@@ -456,7 +456,7 @@ export default function ReviewQueue() {
   const loadLooks = async () => {
     setLoading(true); setSelected(null); setLoadError(null);
     try {
-      const data = await sb(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`);
+      const data = await sbAll(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc,id.desc`);
 
       setLooks(data.map((l: any) => {
         const rows = l.look_brand_credits || [];
