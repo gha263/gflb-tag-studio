@@ -261,15 +261,16 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, t, humanTagged, aiTagged] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,season_display,source_url,notes,status,created_at,image_mode,look_brand_credits(brand_id,credit_order,brands(id,name))&order=created_at.desc&limit=2000"),
+        sb("looks?select=id,cloudinary_url,caption,season_display,source_url,notes,status,created_at,image_mode,look_brand_credits(brand_id,brands(id,name))&order=created_at.desc&limit=2000"),
         sb("tags?select=*&order=tag_type,name"),
         // Two separate queries to avoid row limit issues on large tables
         sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id&limit=10000"),
         sb("entity_tags?entity_type=eq.look&source=eq.ai&status=eq.approved&select=entity_id&limit=10000"),
       ]);
-      // Build brand name from primary look_brand_credits entry (lowest credit_order)
+      // Build brand name from the first look_brand_credits entry. Display
+      // order is owned by the front-end UI; no credit order is stored.
       const looksWithBrand = l.map((look: any) => {
-        const credits = (look.look_brand_credits || []).slice().sort((a: any, b: any) => (a.credit_order ?? 0) - (b.credit_order ?? 0));
+        const credits = look.look_brand_credits || [];
         const primaryBrand = credits[0]?.brands || null;
         return { ...look, primaryBrandId: primaryBrand?.id || null, brands: { name: primaryBrand?.name || "" } };
       });
