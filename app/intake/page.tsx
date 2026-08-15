@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { SUPABASE_URL, H } from "@/lib/supabase";
+import { SUPABASE_URL, H, sbAll } from "@/lib/supabase";
 import { C, FONT_IMPORT } from "@/lib/theme";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -467,15 +467,20 @@ export default function IntakePage() {
 
   useEffect(() => {
     async function loadEntities() {
+      // sbAll paginates through the whole table — replaces the seven
+      // ad-hoc `Range: 0-9999` fetches that used to live here. The
+      // Range-header approach silently truncated at 10k rows; sbAll
+      // handles any size and lives in the shared helper so we don't
+      // duplicate the pagination logic anywhere else.
       try {
         const [b, p, e, l, cr, sn, pubs] = await Promise.all([
-          fetch(`${SUPABASE_URL}/rest/v1/brands?select=id,name,slug&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/people?select=id,name,primary_role&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/events?select=id,name,event_type&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/locations?select=id,name,location_type,country_code&order=location_type,name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/credit_roles?select=id,slug,name,sort_order&order=sort_order`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/looks?select=source_name&not=source_name.is.null&order=source_name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
-          fetch(`${SUPABASE_URL}/rest/v1/publications?select=id,name,slug,publication_type,country_id&order=name`, { headers: {...H, "Range-Unit":"items", "Range":"0-9999"} }).then(r => r.json()),
+          sbAll("brands?select=id,name,slug&order=name"),
+          sbAll("people?select=id,name,primary_role&order=name"),
+          sbAll("events?select=id,name,event_type&order=name"),
+          sbAll("locations?select=id,name,location_type,country_code&order=location_type,name"),
+          sbAll("credit_roles?select=id,slug,name,sort_order&order=sort_order"),
+          sbAll("looks?select=source_name&not=source_name.is.null&order=source_name"),
+          sbAll("publications?select=id,name,slug,publication_type,country_id&order=name"),
         ]);
         if (Array.isArray(b) && b.length > 0) setBrands(b);
         if (Array.isArray(p) && p.length > 0) setPeople(p);
