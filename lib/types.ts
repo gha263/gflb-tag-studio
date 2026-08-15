@@ -94,7 +94,6 @@ export interface LookCredit {
   look_id: string;
   person_id: string;
   role: string;
-  credit_order: number | null;
   notes: string | null;
 }
 
@@ -103,7 +102,6 @@ export interface LookBrandCredit {
   look_id: string;
   brand_id: string;
   role: string;
-  credit_order: number | null;
 }
 
 export interface Location {
