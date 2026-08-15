@@ -74,8 +74,8 @@ export const sbAll = async (path: string): Promise<any[]> => {
 // Includes both human-tagged and AI-approved (Ring 1 auto-applied).
 // This powers Browse mode, Frames look counts, and tag filter in Tag Studio.
 export const fetchLookIdsForTag = async (tagId: string): Promise<Set<string>> => {
-  const rows = await sb(
-    `entity_tags?tag_id=eq.${tagId}&entity_type=eq.look&select=entity_id,source,status`
+  const rows = await sbAll(
+    `entity_tags?tag_id=eq.${tagId}&entity_type=eq.look&select=entity_id,source,status&order=entity_id`
   );
   return new Set<string>(
     (rows || [])
