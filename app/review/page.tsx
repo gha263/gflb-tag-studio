@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { sb, H, SUPABASE_URL } from "@/lib/supabase";
+import { sb, sbAll, H, SUPABASE_URL } from "@/lib/supabase";
 import { C, FONT_IMPORT } from "@/lib/theme";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -433,14 +433,20 @@ export default function ReviewQueue() {
   }, [loading, looks]); // eslint-disable-line
 
   const loadEntities = async () => {
+    // sbAll paginates until the whole table is fetched — critical for
+    // people/brands (>1000 rows) so the typeahead doesn't silently miss
+    // entries alphabetically past the PostgREST default cap, offer
+    // "+ Create" for someone who already exists, and blow up on the unique
+    // constraint. sbAll is a no-op cost for the small reference tables
+    // (credit_roles, events, locations) — one HTTP round-trip either way.
     try {
       const [b, p, e, l, cr, pubs] = await Promise.all([
-        sb("brands?select=id,name&order=name"),
-        sb("people?select=id,name,primary_role&order=name"),
-        sb("events?select=id,name,event_type&order=name"),
-        sb("locations?select=id,name,location_type&order=location_type,name"),
-        sb("credit_roles?select=id,slug,name,sort_order&order=sort_order"),
-        sb("publications?select=id,name,slug,publication_type,country_id&order=name"),
+        sbAll("brands?select=id,name&order=name"),
+        sbAll("people?select=id,name,primary_role&order=name"),
+        sbAll("events?select=id,name,event_type&order=name"),
+        sbAll("locations?select=id,name,location_type&order=location_type,name"),
+        sbAll("credit_roles?select=id,slug,name,sort_order&order=sort_order"),
+        sbAll("publications?select=id,name,slug,publication_type,country_id&order=name"),
       ]);
       setBrands(b); setPeople(p); setEvents(e); setLocations(l); setCreditRoles(cr);
       if (Array.isArray(pubs)) setPubList(pubs);
