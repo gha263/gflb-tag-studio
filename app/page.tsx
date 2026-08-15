@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { sb, fetchLookIdsForTag } from "@/lib/supabase";
+import { sb, sbAll, fetchLookIdsForTag } from "@/lib/supabase";
 import { C, FONT_IMPORT } from "@/lib/theme";
 
 const TAG_TYPE_ORDER = [
@@ -261,11 +261,11 @@ export default function TagStudio() {
     setLoading(true);
     try {
       const [l, t, humanTagged, aiTagged] = await Promise.all([
-        sb("looks?select=id,cloudinary_url,caption,season_display,source_url,notes,status,created_at,image_mode,look_brand_credits(brand_id,brands(id,name))&order=created_at.desc&limit=2000"),
+        sbAll("looks?select=id,cloudinary_url,caption,season_display,source_url,notes,status,created_at,image_mode,look_brand_credits(brand_id,brands(id,name))&order=created_at.desc,id.desc"),
         sb("tags?select=*&order=tag_type,name"),
         // Two separate queries to avoid row limit issues on large tables
-        sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id&limit=10000"),
-        sb("entity_tags?entity_type=eq.look&source=eq.ai&status=eq.approved&select=entity_id&limit=10000"),
+        sbAll("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id&order=entity_id"),
+        sbAll("entity_tags?entity_type=eq.look&source=eq.ai&status=eq.approved&select=entity_id&order=entity_id"),
       ]);
       // Build brand name from the first look_brand_credits entry. Display
       // order is owned by the front-end UI; no credit order is stored.
