@@ -24,7 +24,6 @@ export default function TagStudio() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [humanTagIds, setHumanTagIds] = useState<Set<string>>(new Set());
   const [aiApprovedTagIds, setAiApprovedTagIds] = useState<Set<string>>(new Set());
-  const [primaryTagId, setPrimaryTagId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -32,7 +31,6 @@ export default function TagStudio() {
   const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
   const [statusFilter, setStatusFilter] = useState<string>(() => { try { return localStorage.getItem("ts_status") || "published"; } catch { return "published"; } });
   const [untaggedOnly, setUntaggedOnly] = useState(false);
-  const [primaryOnly, setPrimaryOnly] = useState(() => { try { return localStorage.getItem("ts_primary_only") === "true"; } catch { return false; } });
   const [sortMode, setSortMode] = useState<"newest" | "oldest">(() => { try { return (localStorage.getItem("ts_sort") as any) || "newest"; } catch { return "newest"; } });
   const [taggedLookIds, setTaggedLookIds] = useState<Set<string>>(new Set());
   const [jumpInput, setJumpInput] = useState("");
@@ -101,7 +99,6 @@ export default function TagStudio() {
   useEffect(() => { try { localStorage.setItem("ts_brand", brandFilter); } catch {} }, [brandFilter]);
   useEffect(() => { try { localStorage.setItem("ts_status", statusFilter); } catch {} }, [statusFilter]);
   useEffect(() => { try { localStorage.setItem("ts_sort", sortMode); } catch {} }, [sortMode]);
-  useEffect(() => { try { localStorage.setItem("ts_primary_only", String(primaryOnly)); } catch {} }, [primaryOnly]);
 
   useEffect(() => {
     if (filtered[idx]) {
@@ -125,54 +122,13 @@ export default function TagStudio() {
       return;
     }
     setTagFilterLoading(true);
-    // Color tag + primaryOnly: query looks.primary_color_tag_id directly (Living
-    // Grid semantics — only starred primaries, matches what would render in the
-    // Grid bucket). Anything else falls back to the broad entity_tags filter.
-    const isColor = (tagsByType["color"] || []).some((t: any) => t.id === tagId);
-    let ids: Set<string>;
-    if (isColor && primaryOnly) {
-      const rows = await sb(`looks?primary_color_tag_id=eq.${tagId}&select=id`);
-      ids = new Set<string>((rows || []).map((r: any) => r.id));
-    } else {
-      ids = lookIdCache[tagId] ?? await fetchLookIdsForTag(tagId);
-      if (!lookIdCache[tagId]) {
-        setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
-      }
+    const ids = lookIdCache[tagId] ?? await fetchLookIdsForTag(tagId);
+    if (!lookIdCache[tagId]) {
+      setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
     }
     setTagFilterLookIds(ids);
     setTagFilterLoading(false);
   };
-
-  // Re-fetch the tag filter when primaryOnly toggles while a color tag is selected.
-  // Non-color tags and "all" are unaffected — primaryOnly only reshapes color queries.
-  useEffect(() => {
-    if (tagFilterId === "all") return;
-    const isColor = (tagsByType["color"] || []).some((t: any) => t.id === tagFilterId);
-    if (!isColor) return;
-
-    let cancelled = false;
-    (async () => {
-      setTagFilterLoading(true);
-      try {
-        let ids: Set<string>;
-        if (primaryOnly) {
-          const rows = await sb(`looks?primary_color_tag_id=eq.${tagFilterId}&select=id`);
-          ids = new Set<string>((rows || []).map((r: any) => r.id));
-        } else {
-          ids = lookIdCache[tagFilterId] ?? await fetchLookIdsForTag(tagFilterId);
-          if (!lookIdCache[tagFilterId]) {
-            setLookIdCache(prev => ({ ...prev, [tagFilterId]: ids }));
-          }
-        }
-        if (!cancelled) setTagFilterLookIds(ids);
-      } catch (e) {
-        console.error(e);
-      }
-      if (!cancelled) setTagFilterLoading(false);
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primaryOnly]);
 
   const handleJump = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
@@ -305,12 +261,11 @@ export default function TagStudio() {
   };
 
   const loadTags = async (lookId: string) => {
-    // Primary color lives on looks.primary_color_tag_id (scalar column) now.
-    // Entity_tags is only queried for active/human/AI membership.
-    const [data, lookRows] = await Promise.all([
-      sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,source,status`),
-      sb(`looks?id=eq.${lookId}&select=primary_color_tag_id`),
-    ]);
+    // Color bucket assignment (looks.grid_bucket_tag_id) is owned by the
+    // classify-look-color edge function (Gemini vision) and is not surfaced
+    // or editable here — Tag Studio's role is entity_tags (search/discovery
+    // signal), not Grid bucket curation.
+    const data = await sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,source,status`);
     const human = new Set<string>(
       data.filter((t: any) => t.source === "human").map((t: any) => t.tag_id)
     );
@@ -320,7 +275,6 @@ export default function TagStudio() {
     setHumanTagIds(human);
     setAiApprovedTagIds(aiApproved);
     setActiveTags(new Set<string>([...human, ...aiApproved]));
-    setPrimaryTagId(lookRows?.[0]?.primary_color_tag_id ?? null);
   };
 
   const toggleTag = async (tagId: string) => {
@@ -340,14 +294,6 @@ export default function TagStudio() {
         const newHuman = new Set(humanTagIds);
         newHuman.delete(tagId);
         setHumanTagIds(newHuman);
-        if (primaryTagId === tagId) {
-          // If this was the primary color, clear looks.primary_color_tag_id too
-          await sb(`looks?id=eq.${look.id}`, {
-            method: "PATCH", prefer: "",
-            body: JSON.stringify({ primary_color_tag_id: null }),
-          });
-          setPrimaryTagId(null);
-        }
 
         if (!isAI) {
           // No AI fallback — remove entirely from active
@@ -447,55 +393,10 @@ export default function TagStudio() {
           });
         }
       }
-      if (primaryTagId === tagId) {
-        // If the rejected color was primary, clear looks.primary_color_tag_id too
-        await sb(`looks?id=eq.${look.id}`, {
-          method: "PATCH", prefer: "",
-          body: JSON.stringify({ primary_color_tag_id: null }),
-        });
-        setPrimaryTagId(null);
-      }
     } catch(e) { console.error(e); }
     setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
   };
 
-  const setPrimary = async (tagId: string) => {
-    const look = filtered[idx];
-    if (!look) return;
-    setSaving(true);
-    try {
-      // Toggle: click starred = clear, click unstarred = set.
-      // primary_color_tag_id is a scalar column on `looks` — the single source
-      // of truth for a look's primary color. Legacy entity_tags is_primary /
-      // is_primary_confirmed flags are no longer written or read.
-      const newPrimary = primaryTagId === tagId ? null : tagId;
-      await sb(`looks?id=eq.${look.id}`, {
-        method: "PATCH", prefer: "",
-        body: JSON.stringify({ primary_color_tag_id: newPrimary }),
-      });
-      setPrimaryTagId(newPrimary);
-      // If the current tag filter is this color tag AND primaryOnly is on, keep
-      // the active look inside the filtered set as its primary status changes.
-      if (tagFilterId === tagId && primaryOnly) {
-        setTagFilterLookIds(prev => {
-          if (!prev) return prev;
-          const s = new Set(prev);
-          if (newPrimary) s.add(look.id); else s.delete(look.id);
-          return s;
-        });
-      } else if (primaryOnly && tagFilterId !== "all") {
-        // We may have just removed this look from a different color's primary bucket.
-        const wasFilteredColor = (tagsByType["color"] || []).some((t: any) => t.id === tagFilterId);
-        if (wasFilteredColor) {
-          setTagFilterLookIds(prev => {
-            if (!prev) return prev;
-            const s = new Set(prev); s.delete(look.id); return s;
-          });
-        }
-      }
-    } catch(e) { console.error(e); }
-    setSaving(false);
-  };
 
   const saveNotes = async () => {
     const look = filtered[idx];
@@ -621,12 +522,6 @@ export default function TagStudio() {
           <button onClick={() => { setUntaggedOnly(v => !v); setIdx(0); }}
             style={{background:untaggedOnly?C.white:"#484848",border:"1px solid #606060",color:untaggedOnly?"#212121":C.text,padding:"7px 12px",fontSize:13,borderRadius:20,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:untaggedOnly?600:500}}>
             Untagged only
-          </button>
-
-          <button onClick={() => { setPrimaryOnly(v => !v); setIdx(0); }}
-            title="Filter color tag results to looks whose primary star matches — same as the Living Grid bucket"
-            style={{background:primaryOnly?C.amber:"#484848",border:"1px solid #606060",color:primaryOnly?"#212121":C.text,padding:"7px 12px",fontSize:13,borderRadius:20,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:primaryOnly?600:500}}>
-            ★ Primary only
           </button>
 
           <input value={jumpInput} onChange={e => setJumpInput(e.target.value)} onKeyDown={handleJump}
@@ -884,16 +779,8 @@ export default function TagStudio() {
                       const isHumanConfirmed = humanTagIds.has(tag.id);
                       const isAiOnly = on && !isHumanConfirmed;
                       const isColor = type === "color";
-                      const isPrimary = primaryTagId === tag.id;
                       return (
                         <div key={tag.id} style={{display:"inline-flex",alignItems:"center",gap:0}}>
-                          {isColor && on && (
-                            <button onClick={e => { e.stopPropagation(); setPrimary(tag.id); }}
-                              title={isPrimary ? "Primary color — click to clear" : "Set as primary color"}
-                              style={{background:isPrimary?C.amber:C.lift2,border:"none",color:isPrimary?"#212121":C.muted,padding:"6px 8px 6px 10px",fontSize:12,cursor:"pointer",borderRadius:"20px 0 0 20px",fontFamily:"Inter,sans-serif",lineHeight:1,transition:"all 0.1s"}}>
-                              {isPrimary ? "★" : "☆"}
-                            </button>
-                          )}
                           <button
                             className={`tag-btn${on ? " on" : ""}`}
                             onClick={() => toggleTag(tag.id)}
@@ -907,7 +794,7 @@ export default function TagStudio() {
                               fontSize: 13,
                               fontWeight: isHumanConfirmed ? 600 : 400,
                               cursor: "pointer",
-                              borderRadius: `${isColor && on ? 0 : 20}px ${isAiOnly ? 0 : 20}px ${isAiOnly ? 0 : 20}px ${isColor && on ? 0 : 20}px`,
+                              borderRadius: `20px ${isAiOnly ? 0 : 20}px ${isAiOnly ? 0 : 20}px 20px`,
                               fontFamily: "Inter,sans-serif",
                               transition: "all 0.1s",
                               textDecoration: tag.definition ? "underline dotted" : "none",
