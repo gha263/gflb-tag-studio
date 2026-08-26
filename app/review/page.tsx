@@ -824,7 +824,7 @@ export default function ReviewQueue() {
     setDeleteError(null);
     try {
       const res = await fetch(
-        `https://rsslbgfbdoqxgogbuuzc.supabase.co/functions/v1/delete-look`,
+        `/api/delete-look`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
