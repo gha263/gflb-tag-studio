@@ -722,7 +722,11 @@ export default function IntakePage() {
       // but missing credits is a silent data gap, not a successful ingest.
       const warnings: string[] = [];
 
-      const brandCredits = validBrandRows.map((b) => ({
+      // credit_order column was dropped from look_brand_credits and
+      // look_credits by the Aug 2026 flip_designer_attribution migration —
+      // any display ordering now derives from created_at + brand_id at
+      // read time. Rows go in without an ordering column; do not re-add.
+      const brandCredits = validBrandRows.map(b => ({
         look_id: lookId,
         brand_id: cleanId(b.brand)!,
         role: null,
@@ -757,7 +761,7 @@ export default function IntakePage() {
 
       const credits = contributors
         .filter(c => c.person && !c.person.id?.startsWith("local-") && c.role && !c.role.id?.startsWith("local-"))
-        .map((c) => ({ look_id: lookId, person_id: c.person.id, role: c.role.name }));
+        .map(c => ({ look_id: lookId, person_id: c.person.id, role: c.role.name }));
       if (credits.length > 0) {
         const ccRes = await fetch(`${SUPABASE_URL}/rest/v1/look_credits`, {
           method: "POST",
