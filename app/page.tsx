@@ -1,1329 +1,996 @@
-// ── REVIEW PAGE → app/review/page.tsx ────────────────────────────────────────
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { sb, sbAll, H, SUPABASE_URL } from "@/lib/supabase";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { sb, fetchLookIdsForTag } from "@/lib/supabase";
 import { C, FONT_IMPORT } from "@/lib/theme";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const TAG_TYPE_ORDER = [
+  "color", "form", "craft", "pattern", "design_language", "mood", "garment_types",
+];
 
-function slugify(str: string) {
-  return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-// Deterministic ordering for brand/person credits after the credit_order
-// column was dropped (Aug 2026, flip_designer_attribution migration).
-// Primary key is created_at (INSERT order); brand_id / person_id breaks
-// ties for rows inserted in the same batch (which share a timestamp). This
-// gives the same row-by-row output every render, so the "primary brand"
-// derived from credits[0] is stable.
-function cmpByCreatedAtThen(idKey: "brand_id" | "person_id") {
-  return (a: any, b: any) => {
-    const aC = a?.created_at || "";
-    const bC = b?.created_at || "";
-    if (aC !== bC) return aC.localeCompare(bC);
-    return (a?.[idKey] || "").localeCompare(b?.[idKey] || "");
-  };
-}
-
-// ── Labelled Typeahead ────────────────────────────────────────────────────────
-
-function Typeahead({ items, value, onChange, onClear, placeholder, onCreateClick, width }: any) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const filtered = query.length > 0
-    ? items.filter((i: any) => i.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
-    : [];
-
-  useEffect(() => {
-    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", fn);
-    return () => document.removeEventListener("mousedown", fn);
-  }, []);
-
-  const wrapStyle = width
-    ? { position: "relative" as const, width, flexShrink: 0 }
-    : { position: "relative" as const, flex: 1 };
-
-  if (value) return (
-    <div style={{ ...wrapStyle, display: "flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "8px 12px" }}>
-      <span style={{ flex: 1, fontSize: 13, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value.name}</span>
-      <button tabIndex={-1} onClick={onClear} style={{ background: "none", border: "none", color: C.muted, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
-    </div>
-  );
-
-  return (
-    <div style={wrapStyle} ref={ref}>
-      <input
-        value={query}
-        placeholder={placeholder || "Search..."}
-        onChange={e => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={e => { if (e.key === "Tab" || e.key === "Escape") setOpen(false); }}
-        style={{ background: C.lift3, border: "none", color: C.text, padding: "8px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box", fontFamily: "Inter,sans-serif" }}
-      />
-      {open && (filtered.length > 0 || (query.length > 1 && onCreateClick)) && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.lift2, borderRadius: 10, zIndex: 300, marginTop: 3, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", maxHeight: 200, overflowY: "auto" }}>
-          {filtered.map((item: any) => (
-            <div key={item.id} style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: C.text, borderBottom: `1px solid ${C.lift1}` }}
-              onMouseDown={() => { onChange(item); setQuery(""); setOpen(false); }}>
-              {item.name}
-              {item.primary_role && <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>{item.primary_role}</span>}
-              {item.location_type && <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>{item.location_type}</span>}
-            </div>
-          ))}
-          {query.length > 1 && onCreateClick && !filtered.find((i: any) => i.name.toLowerCase() === query.toLowerCase()) && (
-            <div onMouseDown={() => { onCreateClick(query); setQuery(""); setOpen(false); }}
-              style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "#4a9eff", fontWeight: 500 }}>
-              + Create "{query}"
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Create modals ─────────────────────────────────────────────────────────────
-
-function CreatePersonModal({ initialName, role, roles, onSave, onClose, onCreateRole }: any) {
-  const [name, setName] = useState(initialName || "");
-  const [selectedRole, setSelectedRole] = useState<any>(
-    () => roles.find((r: any) => r.slug === (role || "").replace(/_/g, "-")) || null
-  );
-  const [ig, setIg] = useState("");
-  const [website, setWebsite] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    try {
-      const result = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
-        method: "POST",
-        headers: { ...H, Prefer: "return=representation" },
-        body: JSON.stringify({ name: name.trim(), slug: slugify(name), primary_role: selectedRole?.name || null, instagram_url: ig.trim() || null, website: website.trim() || null }),
-      });
-      if (!result.ok) throw new Error(await result.text());
-      const [created] = await result.json();
-      onSave(created);
-    } catch (e: any) { alert(e.message); }
-    setSaving(false);
-  };
-
-  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "9px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
-  const lbl = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.07em" };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.lift2}` }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#ececec" }}>New Person</span>
-          <button tabIndex={-1} onClick={onClose} style={{ background: "none", border: "none", color: C.muted, fontSize: 22, cursor: "pointer", padding: 0 }}>×</button>
-        </div>
-        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Name *</label>
-            <input value={name} onChange={e => setName(e.target.value)} autoFocus style={inp2} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Role</label>
-            <Typeahead
-              items={roles}
-              value={selectedRole}
-              onChange={(r: any) => setSelectedRole(r)}
-              onClear={() => setSelectedRole(null)}
-              placeholder="Search or create role..."
-              onCreateClick={async (newRoleName: string) => {
-                const created = await onCreateRole(newRoleName);
-                if (created) setSelectedRole(created);
-              }}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Instagram URL</label>
-            <input value={ig} onChange={e => setIg(e.target.value)} placeholder="https://instagram.com/handle" style={inp2} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Website</label>
-            <input value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." style={inp2} />
-          </div>
-        </div>
-        <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button tabIndex={-1} onClick={onClose} style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ background: "#ececec", border: "none", color: "#212121", padding: "8px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving || !name.trim() ? 0.4 : 1 }}>
-            {saving ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreateBrandModal({ initialName, locations, people, onSave, onPersonCreated, onClose }: any) {
-  const [name, setName] = useState(initialName || "");
-  const [ig, setIg] = useState("");
-  const [website, setWebsite] = useState("");
-  const [country, setCountry] = useState<any>(null);
-  const [city, setCity] = useState<any>(null);
-  const [cdPerson, setCdPerson] = useState<any>(null);
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    try {
-      // 1. Create brand
-      const brandRes = await fetch(`${SUPABASE_URL}/rest/v1/brands`, {
-        method: "POST",
-        headers: { ...H, Prefer: "return=representation" },
-        body: JSON.stringify({ name: name.trim(), slug: slugify(name), instagram_handle: ig.trim() || null, website: website.trim() || null, country_id: country?.id || null, city_id: city?.id || null }),
-      });
-      if (!brandRes.ok) throw new Error(await brandRes.text());
-      const [createdBrand] = await brandRes.json();
-
-      // 2. Handle creative director
-      let cdPersonId = cdPerson?.isNew ? null : cdPerson?.id;
-      if (cdPerson?.isNew && cdPerson.name) {
-        const personRes = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
-          method: "POST",
-          headers: { ...H, Prefer: "return=representation" },
-          body: JSON.stringify({ name: cdPerson.name.trim(), slug: slugify(cdPerson.name), primary_role: "creative_director" }),
-        });
-        if (!personRes.ok) throw new Error(await personRes.text());
-        const [createdPerson] = await personRes.json();
-        cdPersonId = createdPerson.id;
-        if (onPersonCreated) onPersonCreated(createdPerson);
-      }
-      if (cdPersonId && createdBrand.id) {
-        await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
-          method: "POST",
-          headers: { ...H, Prefer: "return=minimal" },
-          body: JSON.stringify({ brand_id: createdBrand.id, person_id: cdPersonId, is_current: true }),
-        });
-      }
-
-      onSave(createdBrand);
-    } catch (e: any) { alert(e.message); }
-    setSaving(false);
-  };
-
-  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "9px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
-  const lbl = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.07em" };
-  const countries = (locations || []).filter((l: any) => l.location_type === "country");
-  const cities = (locations || []).filter((l: any) => l.location_type === "city");
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.lift2}` }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#ececec" }}>New Brand</span>
-          <button tabIndex={-1} onClick={onClose} style={{ background: "none", border: "none", color: C.muted, fontSize: 22, cursor: "pointer", padding: 0 }}>×</button>
-        </div>
-        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Name *</label><input value={name} onChange={e => setName(e.target.value)} autoFocus style={inp2} /></div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Instagram Handle</label><input value={ig} onChange={e => setIg(e.target.value)} placeholder="@handle" style={inp2} /></div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Website</label><input value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." style={inp2} /></div>
-          {countries.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Country</label><Typeahead items={countries} value={country} onChange={setCountry} onClear={() => setCountry(null)} placeholder="Search country..." /></div>}
-          {cities.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>City</label><Typeahead items={cities} value={city} onChange={setCity} onClear={() => setCity(null)} placeholder="Search city..." /></div>}
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Creative Director</label>
-            {cdPerson ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.lift3, borderRadius: 10, padding: "8px 12px" }}>
-                <span style={{ flex: 1, fontSize: 13, color: "#ececec" }}>{cdPerson.name}</span>
-                {cdPerson.isNew && <span style={{ fontSize: 11, color: C.muted }}>new person</span>}
-                <button onClick={() => setCdPerson(null)} tabIndex={-1} style={{ background: "none", border: "none", color: C.muted, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
-              </div>
-            ) : (
-              <Typeahead
-                items={people || []}
-                value={null}
-                onChange={setCdPerson}
-                onClear={() => setCdPerson(null)}
-                placeholder="Search or create..."
-                onCreateClick={(n: string) => setCdPerson({ isNew: true, name: n, id: null })}
-              />
-            )}
-          </div>
-        </div>
-        <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button tabIndex={-1} onClick={onClose} style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ background: "#ececec", border: "none", color: "#212121", padding: "8px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving || !name.trim() ? 0.4 : 1 }}>
-            {saving ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreatePublicationModal({ initialName, onSave, onClose }: any) {
-  const [name, setName] = useState(initialName || "");
-  const [pubType, setPubType] = useState("magazine");
-  const [ig, setIg] = useState("");
-  const [website, setWebsite] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    try {
-      const result = await fetch(`${SUPABASE_URL}/rest/v1/publications`, {
-        method: "POST",
-        headers: { ...H, Prefer: "return=representation" },
-        body: JSON.stringify({ name: name.trim(), slug: slugify(name), publication_type: pubType, instagram_handle: ig.trim() || null, website: website.trim() || null }),
-      });
-      if (!result.ok) throw new Error(await result.text());
-      const [created] = await result.json();
-      onSave(created);
-    } catch (e: any) { alert(e.message); }
-    setSaving(false);
-  };
-
-  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "9px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
-  const lbl = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.07em" };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.lift2}` }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#ececec" }}>New Publication</span>
-          <button tabIndex={-1} onClick={onClose} style={{ background: "none", border: "none", color: C.muted, fontSize: 22, cursor: "pointer", padding: 0 }}>×</button>
-        </div>
-        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Name *</label><input value={name} onChange={e => setName(e.target.value)} autoFocus style={inp2} /></div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <label style={lbl}>Type</label>
-            <select value={pubType} onChange={e => setPubType(e.target.value)} style={{ ...inp2, cursor: "pointer" }}>
-              <option value="magazine">Magazine</option>
-              <option value="digital">Digital</option>
-              <option value="newspaper">Newspaper</option>
-              <option value="trade">Trade</option>
-            </select>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Instagram Handle</label><input value={ig} onChange={e => setIg(e.target.value)} placeholder="@harpersbazaarserbia" style={inp2} /></div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}><label style={lbl}>Website</label><input value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." style={inp2} /></div>
-        </div>
-        <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-          <button tabIndex={-1} onClick={onClose} style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ background: "#ececec", border: "none", color: "#212121", padding: "8px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving || !name.trim() ? 0.4 : 1 }}>
-            {saving ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function F({ label, children, span2 = false }: any) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: span2 ? "1 / -1" : undefined }}>
-      {label && <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>{label}</label>}
-      {children}
-    </div>
-  );
-}
-
-function SectionHead({ title }: { title: string }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, borderBottom: `1px solid ${C.lift2}`, paddingBottom: 6, marginBottom: 2, gridColumn: "1 / -1" }}>
-      {title}
-    </div>
-  );
-}
-
-// ── Main ──────────────────────────────────────────────────────────────────────
-
-type Look = {
-  id: string; status: string; cloudinary_url: string;
-  source_url: string | null; source_name: string | null;
-  scene: string | null; gender: string | null;
-  season_display: string | null; season_term: string | null; season_year: number | null;
-  date_published: string | null; is_key_look: boolean; notes: string | null;
-  created_at: string; is_collaboration: boolean; event_id: string | null;
-  collection_title: string | null; collection_description: string | null;
-  publication_id: string | null; publication_issue_month: number | null;
-  publication_issue_year: number | null;
-  brands_display: string; brand_count: number; credit_count: number; tag_count: number;
+const TYPE_LABELS: {[key: string]: string} = {
+  "color": "Color", "form": "Form", "craft": "Craft",
+  "pattern": "Pattern", "design_language": "Design Language",
+  "mood": "Mood", "garment_types": "Garment",
 };
 
-// dbId: the row's real look_credits/look_brand_credits id when loaded from
-// the database, null for rows added in this editing session. Used by
-// saveEdits to know exactly which old rows to remove after the new set
-// has been written successfully — never delete-then-hope-insert-works.
-type Contributor = { key: string; role: any; person: any; dbId?: string | null };
-type BrandRow = { key: string; brand: any; isCourtesy: boolean; dbId?: string | null };
+const EXCLUDED = ["brand","season","event","brand_category","brand_production","event_format"];
 
-let contributorClipboard: { person: any; role: any }[] = [];
-
-export default function ReviewQueue() {
-  const [looks, setLooks] = useState<Look[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all"|"draft"|"published"|"archived">(() => {
-    if (typeof window !== "undefined") {
-      const s = new URLSearchParams(window.location.search).get("status");
-      if (s && ["draft","published","archived","all"].includes(s)) return s as any;
-    }
-    return "draft";
-  });
-  const [selected, setSelected] = useState<Look | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [sceneFilter, setSceneFilter] = useState("");
-  const [pubFilter, setPubFilter] = useState("");
-  const [eventFilter, setEventFilter] = useState("");
-
+export default function TagStudio() {
+  const [looks, setLooks] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
-  const [events, setEvents] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [pubList, setPubList] = useState<any[]>([]);
-  const [creditRoles, setCreditRoles] = useState<any[]>([]);
+  const [tagsByType, setTagsByType] = useState<Record<string,any[]>>({});
+  const [idx, setIdx] = useState(() => { try { return parseInt(localStorage.getItem("ts_idx") || "0") || 0; } catch { return 0; } });
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [humanTagIds, setHumanTagIds] = useState<Set<string>>(new Set());
+  const [aiApprovedTagIds, setAiApprovedTagIds] = useState<Set<string>>(new Set());
+  const [primaryTagId, setPrimaryTagId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const pendingLookId = useRef<string | null>(null);
+  const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
+  const [statusFilter, setStatusFilter] = useState<string>(() => { try { return localStorage.getItem("ts_status") || "published"; } catch { return "published"; } });
+  const [untaggedOnly, setUntaggedOnly] = useState(false);
+  const [primaryOnly, setPrimaryOnly] = useState(() => { try { return localStorage.getItem("ts_primary_only") === "true"; } catch { return false; } });
+  const [sortMode, setSortMode] = useState<"newest" | "oldest">(() => { try { return (localStorage.getItem("ts_sort") as any) || "newest"; } catch { return "newest"; } });
+  const [taggedLookIds, setTaggedLookIds] = useState<Set<string>>(new Set());
+  const [jumpInput, setJumpInput] = useState("");
+  const [filtered, setFiltered] = useState<any[]>([]);
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [imageMode, setImageMode] = useState<string | null>(null);
+  const [savingImageMode, setSavingImageMode] = useState(false);
 
-  const [brandRows, setBrandRows] = useState<BrandRow[]>([]);
-  const [editIsCollab, setEditIsCollab] = useState(false);
-  const [contributors, setContributors] = useState<Contributor[]>([]);
-  // Immutable snapshots of what's in the DB, captured at loadDetail time.
-  // saveEdits diffs the editable state against these instead of blindly
-  // deleting-and-reinserting everything, so re-saving unchanged credits
-  // doesn't collide with the unique(look_id, brand_id/person_id, role)
-  // constraints, and a mid-save failure can't wipe rows that never changed.
-  const [originalBrandCredits, setOriginalBrandCredits] = useState<{ dbId: string; brandId: string; role: string | null }[]>([]);
-  const [originalCredits, setOriginalCredits] = useState<{ dbId: string; personId: string; role: string }[]>([]);
+  // ── Tag filter (toolbar dropdown) ────────────────────────────────────────────
+  const [tagFilterId, setTagFilterId] = useState("all");
+  const [tagFilterLookIds, setTagFilterLookIds] = useState<Set<string> | null>(null);
+  const [tagFilterLoading, setTagFilterLoading] = useState(false);
 
-  const [editScene, setEditScene] = useState("");
-  const [editGender, setEditGender] = useState("");
-  const [editSeasonTerm, setEditSeasonTerm] = useState("");
-  const [editSeasonYear, setEditSeasonYear] = useState("");
-  const [editPublishDate, setEditPublishDate] = useState("");
-  const [editSourceUrl, setEditSourceUrl] = useState("");
-  const [editSourceName, setEditSourceName] = useState("");
-  const [editCloudinaryUrl, setEditCloudinaryUrl] = useState("");
-  const [editPublication, setEditPublication] = useState<any>(null);
-  const [editPublicationIssueMonth, setEditPublicationIssueMonth] = useState("");
-  const [editPublicationIssueYear, setEditPublicationIssueYear] = useState("");
-  const [editEvent, setEditEvent] = useState<any>(null);
-  const [editCollectionTitle, setEditCollectionTitle] = useState("");
-  const [editCollectionDesc, setEditCollectionDesc] = useState("");
-  const [editNotes, setEditNotes] = useState("");
-  const [editKeyLook, setEditKeyLook] = useState(false);
+  // ── Browse mode ──────────────────────────────────────────────────────────────
+  const [browseMode, setBrowseMode] = useState(false);
+  const [browseTagIds, setBrowseTagIds] = useState<Set<string>>(new Set());
+  const [lookIdCache, setLookIdCache] = useState<Record<string, Set<string>>>({});
+  const [browseScrollPos, setBrowseScrollPos] = useState(0);
+  const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set(["color"]));
+  const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
+  const [loadingCounts, setLoadingCounts] = useState<Set<string>>(new Set());
 
-  // Delete state
-  const [deletePending, setDeletePending] = useState<Look | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  useEffect(() => { loadData(); }, []);
 
-  const [personModal, setPersonModal] = useState<{name: string; role: string; target: string} | null>(null);
-  const [brandModal, setBrandModal] = useState<{name: string; target: string} | null>(null);
-  const [publicationModal, setPublicationModal] = useState<string | null>(null);
-
-  const [checkedContributors, setCheckedContributors] = useState<Set<string>>(new Set());
-  const [clipboardFlash, setClipboardFlash] = useState(false);
-  const pendingLookId = useRef<string | null>(
-    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("look") : null
-  );
-
-  useEffect(() => { loadEntities(); }, []);
-  useEffect(() => { loadLooks(); }, []);
-
-  // Open look from URL param once the list is loaded
   useEffect(() => {
-    if (loading || !pendingLookId.current || looks.length === 0) return;
-    const look = looks.find(l => l.id === pendingLookId.current);
-    if (look) {
-      // Switch to the look's status tab so it's visible in the list
-      setStatusFilter(look.status as any);
-      selectLook(look);
+    let f = looks;
+    if (statusFilter !== "all") f = f.filter(l => l.status === statusFilter);
+    if (brandFilter === "__unattributed__") f = f.filter(l => !l.primaryBrandId);
+    else if (brandFilter !== "all") f = f.filter(l => l.primaryBrandId === brandFilter);
+    if (tagFilterLookIds !== null) f = f.filter(l => tagFilterLookIds.has(l.id));
+    if (untaggedOnly) f = f.filter(l => !taggedLookIds.has(l.id));
+    if (sortMode === "newest") f = [...f].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    if (sortMode === "oldest") f = [...f].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+    setFiltered(f);
+    setIdx(i => Math.min(i, Math.max(0, f.length - 1)));
+  }, [brandFilter, statusFilter, untaggedOnly, sortMode, tagFilterLookIds, looks, taggedLookIds]);
+
+  // Read ?look= URL param once loading completes, set status filter if needed
+  useEffect(() => {
+    if (loading) return;
+    const params = new URLSearchParams(window.location.search);
+    const lookId = params.get("look");
+    const lookStatus = params.get("status");
+    if (!lookId) return;
+    pendingLookId.current = lookId;
+    if (lookStatus && lookStatus !== statusFilter) setStatusFilter(lookStatus);
+  }, [loading]); // eslint-disable-line
+
+  // Once filtered list updates, jump to pending look
+  useEffect(() => {
+    if (!pendingLookId.current) return;
+    const i = filtered.findIndex(l => l.id === pendingLookId.current);
+    if (i >= 0) {
+      setIdx(i);
       pendingLookId.current = null;
-      // Scroll the row into view after the status filter updates
-      setTimeout(() => {
-        const el = document.getElementById(`look-row-${look.id}`);
-        if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
-      }, 150);
     }
-  }, [loading, looks]); // eslint-disable-line
+  }, [filtered]);
 
-  const loadEntities = async () => {
-    // sbAll paginates until the whole table is fetched — critical for
-    // people/brands (>1000 rows) so the typeahead doesn't silently miss
-    // entries alphabetically past the PostgREST default cap, offer
-    // "+ Create" for someone who already exists, and blow up on the unique
-    // constraint. sbAll is a no-op cost for the small reference tables
-    // (credit_roles, events, locations) — one HTTP round-trip either way.
-    try {
-      const [b, p, e, l, cr, pubs] = await Promise.all([
-        sbAll("brands?select=id,name&order=name"),
-        sbAll("people?select=id,name,primary_role&order=name"),
-        sbAll("events?select=id,name,event_type&order=name"),
-        sbAll("locations?select=id,name,location_type&order=location_type,name"),
-        sbAll("credit_roles?select=id,slug,name,sort_order&order=sort_order"),
-        sbAll("publications?select=id,name,slug,publication_type,country_id&order=name"),
-      ]);
-      setBrands(b); setPeople(p); setEvents(e); setLocations(l); setCreditRoles(cr);
-      if (Array.isArray(pubs)) setPubList(pubs);
-    } catch(e) { console.error(e); }
+  useEffect(() => { try { localStorage.setItem("ts_idx", String(idx)); } catch {} }, [idx]);
+  useEffect(() => { try { localStorage.setItem("ts_brand", brandFilter); } catch {} }, [brandFilter]);
+  useEffect(() => { try { localStorage.setItem("ts_status", statusFilter); } catch {} }, [statusFilter]);
+  useEffect(() => { try { localStorage.setItem("ts_sort", sortMode); } catch {} }, [sortMode]);
+  useEffect(() => { try { localStorage.setItem("ts_primary_only", String(primaryOnly)); } catch {} }, [primaryOnly]);
+
+  useEffect(() => {
+    if (filtered[idx]) {
+      loadTags(filtered[idx].id);
+      setNotes(filtered[idx].notes || "");
+      setEditingNotes(false);
+      setImageMode(filtered[idx].image_mode || null);
+    }
+  }, [idx, filtered]);
+
+  const next = useCallback(() => { if (idx < filtered.length - 1) setIdx(i => i + 1); }, [idx, filtered.length]);
+  const prev = useCallback(() => { if (idx > 0) setIdx(i => i - 1); }, [idx]);
+
+  const handleBrandFilter = (val: string) => { setBrandFilter(val); setIdx(0); };
+
+  const handleTagFilter = async (tagId: string) => {
+    setTagFilterId(tagId);
+    setIdx(0);
+    if (tagId === "all") {
+      setTagFilterLookIds(null);
+      return;
+    }
+    setTagFilterLoading(true);
+    // Color tag + primaryOnly: query looks.primary_color_tag_id directly (Living
+    // Grid semantics — only starred primaries, matches what would render in the
+    // Grid bucket). Anything else falls back to the broad entity_tags filter.
+    const isColor = (tagsByType["color"] || []).some((t: any) => t.id === tagId);
+    let ids: Set<string>;
+    if (isColor && primaryOnly) {
+      const rows = await sb(`looks?primary_color_tag_id=eq.${tagId}&select=id`);
+      ids = new Set<string>((rows || []).map((r: any) => r.id));
+    } else {
+      ids = lookIdCache[tagId] ?? await fetchLookIdsForTag(tagId);
+      if (!lookIdCache[tagId]) {
+        setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
+      }
+    }
+    setTagFilterLookIds(ids);
+    setTagFilterLoading(false);
   };
 
-  const loadLooks = async () => {
-    setLoading(true); setSelected(null); setLoadError(null);
-    try {
-      // credit_order was dropped from look_brand_credits by the Aug 2026
-      // flip_designer_attribution migration — pull created_at instead so
-      // the brands_display column below can order names deterministically.
-      const data = await sb(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,created_at,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`);
+  // Re-fetch the tag filter when primaryOnly toggles while a color tag is selected.
+  // Non-color tags and "all" are unaffected — primaryOnly only reshapes color queries.
+  useEffect(() => {
+    if (tagFilterId === "all") return;
+    const isColor = (tagsByType["color"] || []).some((t: any) => t.id === tagFilterId);
+    if (!isColor) return;
 
-      setLooks(data.map((l: any) => {
-        const rows = (l.look_brand_credits || []).slice().sort(cmpByCreatedAtThen("brand_id"));
-        const names = rows.map((r: any) => r.brands?.name).filter(Boolean);
-        return {
-          ...l,
-          brands_display: l.is_collaboration && names.length >= 2 ? names.join(" × ") : names.join(", "),
-          brand_count: rows.length,
-          credit_count: l.look_credits?.length || 0,
-          tag_count: l.tag_count || 0,
-        };
-      }));
-    } catch(e: any) { console.error(e); setLoadError(e?.message || "Failed to load looks."); }
-    setLoading(false);
+    let cancelled = false;
+    (async () => {
+      setTagFilterLoading(true);
+      try {
+        let ids: Set<string>;
+        if (primaryOnly) {
+          const rows = await sb(`looks?primary_color_tag_id=eq.${tagFilterId}&select=id`);
+          ids = new Set<string>((rows || []).map((r: any) => r.id));
+        } else {
+          ids = lookIdCache[tagFilterId] ?? await fetchLookIdsForTag(tagFilterId);
+          if (!lookIdCache[tagFilterId]) {
+            setLookIdCache(prev => ({ ...prev, [tagFilterId]: ids }));
+          }
+        }
+        if (!cancelled) setTagFilterLookIds(ids);
+      } catch (e) {
+        console.error(e);
+      }
+      if (!cancelled) setTagFilterLoading(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryOnly]);
+
+  const handleJump = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const n = parseInt(jumpInput) - 1;
+    if (!isNaN(n) && n >= 0 && n < filtered.length) setIdx(n);
+    setJumpInput("");
   };
 
-  const loadDetail = async (lookId: string) => {
-    // Order the detail-panel rows by insertion time (created_at) — same
-    // reasoning as loadLooks. Selecting created_at is also needed to keep
-    // brand names in the same order the list view shows them.
-    const [bRows, credits] = await Promise.all([
-      sb(`look_brand_credits?look_id=eq.${lookId}&select=id,brand_id,role,created_at,is_courtesy,brands(id,name)&order=created_at`),
-      sb(`look_credits?look_id=eq.${lookId}&select=id,role,person_id,created_at,ingest_handle,people(id,name,primary_role)&order=created_at`),
-    ]);
-    // Snapshot of what's actually in the DB right now, captured once at load
-    // time and never mutated by editing — this is what saveEdits diffs
-    // against. brandRows/contributors below are the editable copies.
-    setOriginalBrandCredits((bRows || [])
-      .filter((r: any) => r.brands)
-      .map((r: any) => ({ dbId: r.id as string, brandId: r.brand_id as string, role: (r.role ?? null) as string | null })));
-    setOriginalCredits((credits || [])
-      .filter((c: any) => c.people)
-      .map((c: any) => ({ dbId: c.id as string, personId: c.person_id as string, role: c.role as string })));
+  // ── Browse mode helpers ──────────────────────────────────────────────────────
 
-    setBrandRows((bRows || [])
-      .filter((r: any) => r.brands)
-      .map((r: any, i: number) => ({ key: `b-${r.id}-${i}`, brand: r.brands, isCourtesy: !!r.is_courtesy, dbId: r.id })));
-
-    // A role name on look_credits that doesn't map to a current credit_roles
-    // entry is a data anomaly — leave the contributor row's role empty
-    // (null) so the user can re-select from the typeahead. Previously we
-    // fabricated an "adhoc-*" object here; that fake id survived to
-    // saveEdits and caused the FK error on look_credits INSERT downstream.
-    const roleByName = (name: string) => {
-      const match = creditRoles.find(r => r.name === name);
-      if (!match) console.warn(`[review] Role "${name}" from look_credits not found in credit_roles — contributor row will show empty role for re-selection`);
-      return match || null;
-    };
-    setContributors((credits || [])
-      .filter((c: any) => c.people)
-      .map((c: any, i: number) => ({ key: `c-${c.id}-${i}`, role: roleByName(c.role), person: c.people, ingest_handle: c.ingest_handle, dbId: c.id })));
+  const getOrFetchIds = async (tagId: string): Promise<Set<string>> => {
+    if (lookIdCache[tagId]) return lookIdCache[tagId];
+    const ids = await fetchLookIdsForTag(tagId);
+    setLookIdCache(prev => ({ ...prev, [tagId]: ids }));
+    return ids;
   };
 
-  const selectLook = (look: Look) => {
-    setSelected(look);
-    setDeleteError(null);
-    setSaveError(null);
-    setEditScene(look.scene || "");
-    setEditGender(look.gender || "");
-    setEditSeasonTerm(look.season_term || "");
-    setEditSeasonYear(look.season_year?.toString() || "");
-    setEditPublishDate(look.date_published || "");
-    setEditSourceUrl(look.source_url || "");
-    setEditSourceName(look.source_name || "");
-    setEditCloudinaryUrl(look.cloudinary_url || "");
-    setEditPublication(look.publication_id ? pubList.find(p => p.id === look.publication_id) || null : null);
-    setEditPublicationIssueMonth(look.publication_issue_month?.toString() || "");
-    setEditPublicationIssueYear(look.publication_issue_year?.toString() || "");
-    setEditCollectionTitle(look.collection_title || "");
-    setEditCollectionDesc(look.collection_description || "");
-    setEditNotes(look.notes || "");
-    setEditKeyLook(look.is_key_look);
-    setEditIsCollab(!!look.is_collaboration);
-    setEditEvent(look.event_id ? events.find(e => e.id === look.event_id) || { id: look.event_id, name: look.event_id } : null);
-    loadDetail(look.id);
-    clearChecked();
-    // Scroll this row into view
+  const toggleBrowseTag = async (tagId: string) => {
+    const next = new Set(browseTagIds);
+    if (next.has(tagId)) {
+      next.delete(tagId);
+      setBrowseTagIds(next);
+      return;
+    }
+    await getOrFetchIds(tagId);
+    next.add(tagId);
+    setBrowseTagIds(next);
+  };
+
+  const toggleExpandedType = async (type: string) => {
+    const next = new Set(expandedTypes);
+    if (next.has(type)) { next.delete(type); setExpandedTypes(next); return; }
+    next.add(type);
+    setExpandedTypes(next);
+    const tags = (tagsByType[type] || []).filter((t: any) => tagCounts[t.id] === undefined);
+    if (tags.length === 0) return;
+    setLoadingCounts(prev => { const s = new Set(prev); tags.forEach((t: any) => s.add(t.id)); return s; });
+    await Promise.all(tags.map(async (tag: any) => {
+      const ids = await getOrFetchIds(tag.id);
+      setTagCounts(prev => ({ ...prev, [tag.id]: ids.size }));
+      setLoadingCounts(prev => { const s = new Set(prev); s.delete(tag.id); return s; });
+    }));
+  };
+
+  const browseLooks = (() => {
+    if (browseTagIds.size === 0) return filtered;
+    const selectedIds = Array.from(browseTagIds);
+    const sets = selectedIds.map(tid => lookIdCache[tid]).filter(Boolean);
+    if (sets.length !== selectedIds.length) return filtered;
+    return filtered.filter(l => sets.every(s => s.has(l.id)));
+  })();
+
+  const enterEditFromBrowse = (lookId: string) => {
+    const grid = document.getElementById("browse-grid");
+    if (grid) setBrowseScrollPos(grid.scrollTop);
+    const i = filtered.findIndex(l => l.id === lookId);
+    if (i >= 0) { setIdx(i); }
+    else {
+      const allIdx = looks.findIndex(l => l.id === lookId);
+      if (allIdx >= 0) { handleBrandFilter("all"); setIdx(allIdx); }
+    }
+    setBrowseMode(false);
+  };
+
+  const returnToBrowse = () => {
+    setBrowseMode(true);
     setTimeout(() => {
-      const el = document.getElementById(`look-row-${look.id}`);
-      if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const grid = document.getElementById("browse-grid");
+      if (grid) grid.scrollTop = browseScrollPos;
     }, 50);
   };
 
-  // ── Delete ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => {
+      if (["INPUT","SELECT","TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+      if (e.key === "ArrowRight" || e.key === "l") next();
+      if (e.key === "ArrowLeft" || e.key === "h") prev();
+    };
+    window.addEventListener("keydown", fn);
+    return () => window.removeEventListener("keydown", fn);
+  }, [next, prev]);
 
-  const deleteLook = async () => {
-    if (!deletePending) return;
-    const target = deletePending;
-    setDeleting(true);
-    setDeleteError(null);
+  // ── Data loading ─────────────────────────────────────────────────────────────
+
+  const loadData = async () => {
+    setLoading(true);
     try {
-      const res = await fetch(
-        `https://rsslbgfbdoqxgogbuuzc.supabase.co/functions/v1/delete-look`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ look_id: target.id }),
+      const [l, t, humanTagged, aiTagged] = await Promise.all([
+        // credit_order was dropped from look_brand_credits by the Aug 2026
+        // flip_designer_attribution migration — pull created_at instead so
+        // the "primary brand" derived from credits[0] is deterministic
+        // across renders (earliest INSERT wins, ties broken by brand_id).
+        sb("looks?select=id,cloudinary_url,caption,season_display,source_url,notes,status,created_at,image_mode,look_brand_credits(brand_id,created_at,brands(id,name))&order=created_at.desc&limit=2000"),
+        sb("tags?select=*&order=tag_type,name"),
+        // Two separate queries to avoid row limit issues on large tables
+        sb("entity_tags?entity_type=eq.look&source=eq.human&select=entity_id&limit=10000"),
+        sb("entity_tags?entity_type=eq.look&source=eq.ai&status=eq.approved&select=entity_id&limit=10000"),
+      ]);
+      // Build brand name from primary look_brand_credits entry (earliest
+      // created_at wins; brand_id lexicographic breaks ties for rows
+      // inserted in the same batch that share a millisecond timestamp).
+      const looksWithBrand = l.map((look: any) => {
+        const credits = (look.look_brand_credits || []).slice().sort((a: any, b: any) => {
+          const aC = a?.created_at || "";
+          const bC = b?.created_at || "";
+          if (aC !== bC) return aC.localeCompare(bC);
+          return (a?.brand_id || "").localeCompare(b?.brand_id || "");
+        });
+        const primaryBrand = credits[0]?.brands || null;
+        return { ...look, primaryBrandId: primaryBrand?.id || null, brands: { name: primaryBrand?.name || "" } };
+      });
+      const usable = t.filter((t: any) => !EXCLUDED.includes(t.tag_type));
+      const grouped = usable.reduce((acc: Record<string,any[]>, tag: any) => {
+        if (!acc[tag.tag_type]) acc[tag.tag_type] = [];
+        acc[tag.tag_type].push(tag);
+        return acc;
+      }, {});
+      const taggedSet = new Set<string>([
+        ...(humanTagged || []).map((r: any) => r.entity_id as string),
+        ...(aiTagged || []).map((r: any) => r.entity_id as string),
+      ]);
+      // Derive brand list from loaded looks — only brands that actually have looks
+      const brandsMap = new Map<string, string>();
+      looksWithBrand.forEach((look: any) => {
+        if (look.primaryBrandId && look.brands?.name) {
+          brandsMap.set(look.primaryBrandId, look.brands.name);
         }
+      });
+      const derivedBrands = [...brandsMap.entries()]
+        .map(([id, name]) => ({ id, name }))
+        .sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+      setLooks(looksWithBrand);
+      setFiltered(looksWithBrand);
+      setBrands(derivedBrands);
+      setTagsByType(grouped);
+      setTaggedLookIds(taggedSet);
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const loadTags = async (lookId: string) => {
+    // Primary color lives on looks.primary_color_tag_id (scalar column) now.
+    // Entity_tags is only queried for active/human/AI membership.
+    const [data, lookRows] = await Promise.all([
+      sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,source,status`),
+      sb(`looks?id=eq.${lookId}&select=primary_color_tag_id`),
+    ]);
+    const human = new Set<string>(
+      data.filter((t: any) => t.source === "human").map((t: any) => t.tag_id)
+    );
+    const aiApproved = new Set<string>(
+      data.filter((t: any) => t.source === "ai" && t.status === "approved").map((t: any) => t.tag_id)
+    );
+    setHumanTagIds(human);
+    setAiApprovedTagIds(aiApproved);
+    setActiveTags(new Set<string>([...human, ...aiApproved]));
+    setPrimaryTagId(lookRows?.[0]?.primary_color_tag_id ?? null);
+  };
+
+  const toggleTag = async (tagId: string) => {
+    const look = filtered[idx];
+    if (!look) return;
+    setSaving(true);
+    try {
+      const isHuman = humanTagIds.has(tagId);
+      const isAI = aiApprovedTagIds.has(tagId);
+
+      if (isHuman) {
+        // Remove human source — if AI-approved exists, tag stays active (AI-only)
+        await sb(
+          `entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.human`,
+          { method: "DELETE", prefer: "" }
+        );
+        const newHuman = new Set(humanTagIds);
+        newHuman.delete(tagId);
+        setHumanTagIds(newHuman);
+        if (primaryTagId === tagId) {
+          // If this was the primary color, clear looks.primary_color_tag_id too
+          await sb(`looks?id=eq.${look.id}`, {
+            method: "PATCH", prefer: "",
+            body: JSON.stringify({ primary_color_tag_id: null }),
+          });
+          setPrimaryTagId(null);
+        }
+
+        if (!isAI) {
+          // No AI fallback — remove entirely from active
+          const next = new Set(activeTags);
+          next.delete(tagId);
+          setActiveTags(next);
+          setTagCounts(prev => ({ ...prev, [tagId]: Math.max(0, (prev[tagId] ?? 1) - 1) }));
+          setLookIdCache(prev => {
+            if (!prev[tagId]) return prev;
+            const s = new Set(prev[tagId]); s.delete(look.id);
+            return { ...prev, [tagId]: s };
+          });
+          if (tagFilterId === tagId) {
+            setTagFilterLookIds(prev => {
+              if (!prev) return prev;
+              const s = new Set(prev); s.delete(look.id); return s;
+            });
+          }
+          setTaggedLookIds(prev => {
+            const s = new Set(prev);
+            if (newHuman.size === 0) s.delete(look.id);
+            return s;
+          });
+        }
+        // If AI exists: stays in activeTags, just loses human badge — no other updates needed
+
+      } else if (isAI) {
+        // AI-only — promote to human (confirm it)
+        await sb("entity_tags", {
+          method: "POST",
+          body: JSON.stringify({ entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human", model: null }),
+          prefer: "resolution=merge-duplicates",
+        });
+        const newHuman = new Set(humanTagIds);
+        newHuman.add(tagId);
+        setHumanTagIds(newHuman);
+
+      } else {
+        // Off tag — add as human
+        await sb("entity_tags", {
+          method: "POST",
+          body: JSON.stringify({ entity_id: look.id, entity_type: "look", tag_id: tagId, source: "human", model: null }),
+          prefer: "resolution=merge-duplicates",
+        });
+        const newHuman = new Set(humanTagIds);
+        newHuman.add(tagId);
+        setHumanTagIds(newHuman);
+        const next = new Set(activeTags);
+        next.add(tagId);
+        setActiveTags(next);
+        setTaggedLookIds(prev => { const s = new Set(prev); s.add(look.id); return s; });
+        setTagCounts(prev => ({ ...prev, [tagId]: (prev[tagId] ?? 0) + 1 }));
+        setLookIdCache(prev => {
+          if (!prev[tagId]) return prev;
+          const s = new Set(prev[tagId]); s.add(look.id);
+          return { ...prev, [tagId]: s };
+        });
+        if (tagFilterId === tagId) {
+          setTagFilterLookIds(prev => {
+            if (!prev) return prev;
+            const s = new Set(prev); s.add(look.id); return s;
+          });
+        }
+      }
+    } catch(e) { console.error(e); }
+    setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
+  };
+
+  const rejectTag = async (tagId: string) => {
+    const look = filtered[idx];
+    if (!look) return;
+    setSaving(true);
+    try {
+      // Soft-reject: keep the row for audit trail, just flip status off "approved"
+      await sb(
+        `entity_tags?entity_id=eq.${look.id}&tag_id=eq.${tagId}&entity_type=eq.look&source=eq.ai`,
+        { method: "PATCH", prefer: "", body: JSON.stringify({ status: "rejected" }) }
       );
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Delete failed");
+      const newAi = new Set(aiApprovedTagIds);
+      newAi.delete(tagId);
+      setAiApprovedTagIds(newAi);
+
+      if (!humanTagIds.has(tagId)) {
+        const next = new Set(activeTags);
+        next.delete(tagId);
+        setActiveTags(next);
+        setTagCounts(prev => ({ ...prev, [tagId]: Math.max(0, (prev[tagId] ?? 1) - 1) }));
+        setLookIdCache(prev => {
+          if (!prev[tagId]) return prev;
+          const s = new Set(prev[tagId]); s.delete(look.id);
+          return { ...prev, [tagId]: s };
+        });
+        if (tagFilterId === tagId) {
+          setTagFilterLookIds(prev => {
+            if (!prev) return prev;
+            const s = new Set(prev); s.delete(look.id); return s;
+          });
+        }
       }
-      // Refresh list — remove the deleted look, decrement count, close detail if open
-      setLooks(prev => prev.filter(l => l.id !== target.id));
-      if (selected?.id === target.id) setSelected(null);
-      setDeletePending(null);
-    } catch (e: any) {
-      setDeleteError(e.message || "Delete failed");
-    }
-    setDeleting(false);
+      if (primaryTagId === tagId) {
+        // If the rejected color was primary, clear looks.primary_color_tag_id too
+        await sb(`looks?id=eq.${look.id}`, {
+          method: "PATCH", prefer: "",
+          body: JSON.stringify({ primary_color_tag_id: null }),
+        });
+        setPrimaryTagId(null);
+      }
+    } catch(e) { console.error(e); }
+    setSaving(false); setFlash(true); setTimeout(() => setFlash(false), 900);
   };
 
-  // ── Brands & contributors ─────────────────────────────────────────────────
-
-  function addBrandRow() { setBrandRows(prev => [...prev, { key: `b-new-${Date.now()}-${prev.length}`, brand: null, isCourtesy: false }]); }
-  function updateBrandRow(key: string, brand: any) { setBrandRows(prev => prev.map(b => b.key === key ? { ...b, brand } : b)); }
-  function toggleBrandCourtesy(key: string) { setBrandRows(prev => prev.map(b => b.key === key ? { ...b, isCourtesy: !b.isCourtesy } : b)); }
-  function removeBrandRow(key: string) { setBrandRows(prev => prev.filter(b => b.key !== key)); }
-  function addContributor() { setContributors(prev => [...prev, { key: `c-new-${Date.now()}-${prev.length}`, role: null, person: null, ingest_handle: null } as any]); }
-
-  const clearChecked = () => setCheckedContributors(new Set());
-
-  function toggleContributorCheck(key: string) {
-    setCheckedContributors(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
-  }
-
-  function copyContributors() {
-    const sel = contributors.filter(c => checkedContributors.has(c.key) && c.person?.id && c.role);
-    if (sel.length === 0) return;
-    contributorClipboard = sel.map(c => ({ person: c.person, role: c.role }));
-    setClipboardFlash(true);
-    clearChecked();
-    setTimeout(() => setClipboardFlash(false), 1800);
-  }
-
-  function pasteContributors() {
-    if (contributorClipboard.length === 0) return;
-    setContributors(prev => {
-      const existing = new Set(prev.map(c => `${c.person?.id}::${c.role?.name}`));
-      const toAdd = contributorClipboard
-        .filter(c => !existing.has(`${c.person?.id}::${c.role?.name}`))
-        .map(c => ({ key: `c-paste-${c.person.id}-${Date.now()}-${Math.random()}`, person: c.person, role: c.role }));
-      return [...prev, ...toAdd];
-    });
-  }
-
-  function updateContributorRole(key: string, role: any) { setContributors(prev => prev.map(c => c.key === key ? { ...c, role } : c)); }
-  function updateContributorPerson(key: string, person: any) {
-    setContributors(prev => prev.map(c => {
-      if (c.key !== key) return c;
-      let role = c.role;
-      if (!role && person?.primary_role) {
-        const pr = person.primary_role;
-        const match = creditRoles.find((r: any) => r.name === pr || r.slug === pr.replace(/_/g, "-"));
-        if (match) role = match;
-      }
-      return { ...c, person, role };
-    }));
-  }
-  function removeContributor(key: string) { setContributors(prev => prev.filter(c => c.key !== key)); }
-
-  async function post(path: string, data: any) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      method: "POST", headers: { ...H, Prefer: "return=representation" }, body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return (await res.json())[0];
-  }
-
-  async function createRole(name: string, rowKey: string) {
-    const slug = slugify(name);
-    try {
-      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
-      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-      updateContributorRole(rowKey, created);
-    } catch (e: any) {
-      // Do NOT fabricate a local-* role on failure. A fake id here silently
-      // poisons contributor state, and the eventual look_credits INSERT
-      // fails with an FK error that reads as if the whole save is broken.
-      // Surface the create error immediately; the role field stays empty
-      // so the user can pick an existing role or retry.
-      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
-    }
-  }
-
-  async function createRoleForModal(name: string): Promise<any> {
-    const slug = slugify(name);
-    try {
-      const created = await post("credit_roles", { name: name.trim().toLowerCase(), slug, sort_order: 999 });
-      setCreditRoles(prev => [...prev, created].sort((a: any, b: any) => a.sort_order - b.sort_order));
-      return created;
-    } catch (e: any) {
-      // Same reasoning as createRole. Return null; the caller's
-      // `if (created) setSelectedRole(created)` handles null cleanly.
-      alert(`Couldn't create role "${name}": ${e?.message || "unknown error"}`);
-      return null;
-    }
-  }
-
-  const saveEdits = async () => {
-    if (!selected) return;
+  const setPrimary = async (tagId: string) => {
+    const look = filtered[idx];
+    if (!look) return;
     setSaving(true);
-    setSaveError(null);
     try {
-      const validBrandRows = brandRows.filter(b => b.brand?.id);
-
-      // Belt-and-suspenders: guard against any fabricated local-* or adhoc-*
-      // ids that might survive from a prior code path or a stale session
-      // (e.g. state hanging around from before the create* helpers were
-      // fixed to stop fabricating). The create* helpers no longer make
-      // these, but if any leak in, abort BEFORE any write happens so
-      // nothing gets corrupted and the user gets a specific error naming
-      // what needs to be re-selected.
-      const isFake = (id: any) => typeof id === "string" && (id.startsWith("local-") || id.startsWith("adhoc-"));
-      const stalePeople = contributors.filter(c => c.person?.id && isFake(c.person.id));
-      const staleRoles = contributors.filter(c => c.role?.id && isFake(c.role.id));
-      const staleBrands = brandRows.filter(b => b.brand?.id && isFake(b.brand.id));
-      if (stalePeople.length > 0 || staleRoles.length > 0 || staleBrands.length > 0) {
-        const parts: string[] = [];
-        if (stalePeople.length > 0) parts.push(`unsaved people: ${stalePeople.map(c => c.person.name).join(", ")}`);
-        if (staleRoles.length > 0) parts.push(`unsaved roles: ${staleRoles.map(c => `"${c.role.name}"${c.person?.name ? ` (on ${c.person.name})` : ""}`).join(", ")}`);
-        if (staleBrands.length > 0) parts.push(`unsaved brands: ${staleBrands.map(b => b.brand.name).join(", ")}`);
-        throw new Error(`Cannot save — re-select from typeahead: ${parts.join(" · ")}`);
-      }
-
-      // Any option in the Scene dropdown must match the looks.scene CHECK
-      // constraint exactly, or Postgres rejects the whole PATCH. Catch that
-      // here with a clear message instead of a bare 400 from Postgres.
-      const ALLOWED_SCENES = ["runway", "street", "editorial", "designer_showcase", "lookbook", "presentation", "campaign", "portrait", "behind_the_scenes", "installation", "other"];
-      if (editScene && !ALLOWED_SCENES.includes(editScene)) {
-        throw new Error(`"${editScene}" is not a valid scene value.`);
-      }
-
-      await sb(`looks?id=eq.${selected.id}`, {
+      // Toggle: click starred = clear, click unstarred = set.
+      // primary_color_tag_id is a scalar column on `looks` — the single source
+      // of truth for a look's primary color. Legacy entity_tags is_primary /
+      // is_primary_confirmed flags are no longer written or read.
+      const newPrimary = primaryTagId === tagId ? null : tagId;
+      await sb(`looks?id=eq.${look.id}`, {
         method: "PATCH", prefer: "",
-        body: JSON.stringify({
-          is_collaboration: editIsCollab,
-          scene: editScene || null,
-          gender: editGender || null,
-          season_term: editSeasonTerm || null,
-          season_year: editSeasonYear ? parseInt(editSeasonYear) : null,
-          date_published: editPublishDate || null,
-          source_url: editSourceUrl || null,
-          source_name: editSourceName || null,
-          cloudinary_url: editCloudinaryUrl || null,
-          publication_id: editPublication?.id || null,
-          publication_issue_month: editPublicationIssueMonth ? parseInt(editPublicationIssueMonth) : null,
-          publication_issue_year: editPublicationIssueYear ? parseInt(editPublicationIssueYear) : null,
-          event_id: editEvent?.id || null,
-          collection_title: editCollectionTitle || null,
-          collection_description: editCollectionDesc || null,
-          notes: editNotes || null,
-          is_key_look: editKeyLook,
-        }),
+        body: JSON.stringify({ primary_color_tag_id: newPrimary }),
       });
-
-      // Reconcile credits by identity — (brand_id, role) and (person_id,
-      // role) are exactly the columns the DB's unique constraints key on.
-      // Diff against the snapshot taken at load time (originalBrandCredits /
-      // originalCredits), which never mutates as the form is edited:
-      //   - a desired tuple with no existing match  → INSERT
-      //   - an existing tuple with no desired match → DELETE (by its dbId)
-      //   - a tuple present in both (brands only)   → PATCH is_courtesy
-      // Unchanged rows are never re-inserted, so re-saving without touching
-      // credits can't collide with the row that's already sitting there —
-      // the bug that produced the "duplicate key value" error.
-      const bKey = (brandId: string, role: string | null) => `${brandId}::${role ?? ""}`;
-      const cKey = (personId: string, role: string) => `${personId}::${role}`;
-
-      // ---- Brand credits ----
-      // credit_order was dropped in the Aug 2026 flip_designer_attribution
-      // migration — new rows go in without it, and the PATCH only carries
-      // is_courtesy since that's the last remaining mutable column here.
-      const existingBrandByKey = new Map(originalBrandCredits.map(r => [bKey(r.brandId, r.role), r.dbId]));
-      const desiredBrandByKey = new Map<string, { brandId: string; role: null; isCourtesy: boolean }>();
-      validBrandRows.forEach(b => {
-        desiredBrandByKey.set(bKey(b.brand.id, null), { brandId: b.brand.id, role: null, isCourtesy: b.isCourtesy });
-      });
-
-      const brandsToInsert = [...desiredBrandByKey.entries()].filter(([key]) => !existingBrandByKey.has(key));
-      const brandsToUpdate = [...desiredBrandByKey.entries()].filter(([key]) => existingBrandByKey.has(key));
-      const brandDbIdsToDelete = [...existingBrandByKey.keys()].filter(key => !desiredBrandByKey.has(key)).map(key => existingBrandByKey.get(key)!);
-
-      if (brandsToInsert.length > 0) {
-        await sb("look_brand_credits", { method: "POST", body: JSON.stringify(
-          brandsToInsert.map(([, row]) => ({ look_id: selected.id, brand_id: row.brandId, role: row.role, is_courtesy: row.isCourtesy }))
-        ) });
+      setPrimaryTagId(newPrimary);
+      // If the current tag filter is this color tag AND primaryOnly is on, keep
+      // the active look inside the filtered set as its primary status changes.
+      if (tagFilterId === tagId && primaryOnly) {
+        setTagFilterLookIds(prev => {
+          if (!prev) return prev;
+          const s = new Set(prev);
+          if (newPrimary) s.add(look.id); else s.delete(look.id);
+          return s;
+        });
+      } else if (primaryOnly && tagFilterId !== "all") {
+        // We may have just removed this look from a different color's primary bucket.
+        const wasFilteredColor = (tagsByType["color"] || []).some((t: any) => t.id === tagFilterId);
+        if (wasFilteredColor) {
+          setTagFilterLookIds(prev => {
+            if (!prev) return prev;
+            const s = new Set(prev); s.delete(look.id); return s;
+          });
+        }
       }
-      for (const [key, row] of brandsToUpdate) {
-        await sb(`look_brand_credits?id=eq.${existingBrandByKey.get(key)}`, { method: "PATCH", prefer: "", body: JSON.stringify({ is_courtesy: row.isCourtesy }) });
-      }
-      if (brandDbIdsToDelete.length > 0) {
-        await sb(`look_brand_credits?id=in.(${brandDbIdsToDelete.join(",")})`, { method: "DELETE", prefer: "" });
-      }
-
-      // ---- Person credits ----
-      // Same story as brand credits: credit_order gone. And look_credits
-      // has no other mutable column being tracked from the editor, so a
-      // (person_id, role) tuple that already exists in the DB has nothing
-      // to PATCH — INSERT and DELETE paths are the only work needed.
-      // Row identity changes (e.g. swapping a person on an existing row)
-      // naturally surface as a matched INSERT-plus-DELETE pair because
-      // the tuple key differs.
-      const existingCreditByKey = new Map(originalCredits.map(r => [cKey(r.personId, r.role), r.dbId]));
-      const desiredCreditByKey = new Map<string, { personId: string; role: string }>();
-      const validContributors = contributors.filter(c => c.person?.id && c.role);
-      validContributors.forEach(c => {
-        desiredCreditByKey.set(cKey(c.person.id, c.role.name), { personId: c.person.id, role: c.role.name });
-      });
-      // Two contributor rows resolving to the same (person, role) collapse
-      // into one write — there's nothing distinguishing them for the DB to
-      // keep separately, and this is what used to surface as a raw
-      // "duplicate key value" Postgres error instead of just being handled.
-      const keyCounts = new Map<string, number>();
-      validContributors.forEach(c => { const k = cKey(c.person.id, c.role.name); keyCounts.set(k, (keyCounts.get(k) || 0) + 1); });
-      const mergedDuplicates = [...new Set(
-        validContributors.filter(c => (keyCounts.get(cKey(c.person.id, c.role.name)) || 0) > 1)
-          .map(c => `${c.person.name} (${c.role.name})`)
-      )];
-
-      const creditsToInsert = [...desiredCreditByKey.entries()].filter(([key]) => !existingCreditByKey.has(key));
-      const creditDbIdsToDelete = [...existingCreditByKey.keys()].filter(key => !desiredCreditByKey.has(key)).map(key => existingCreditByKey.get(key)!);
-
-      if (creditsToInsert.length > 0) {
-        await sb("look_credits", { method: "POST", body: JSON.stringify(
-          creditsToInsert.map(([, row]) => ({ look_id: selected.id, person_id: row.personId, role: row.role }))
-        ) });
-      }
-      if (creditDbIdsToDelete.length > 0) {
-        await sb(`look_credits?id=in.(${creditDbIdsToDelete.join(",")})`, { method: "DELETE", prefer: "" });
-      }
-
-      const droppedContributors = contributors.filter(c => c.person?.id && !c.role);
-      const notes: string[] = [];
-      if (droppedContributors.length > 0) notes.push(`skipped (no role selected): ${droppedContributors.map(c => c.person.name).join(", ")}`);
-      if (mergedDuplicates.length > 0) notes.push(`merged duplicate rows: ${mergedDuplicates.join(", ")}`);
-      if (notes.length > 0) setSaveError(`Saved, but ${notes.join(" · ")}`);
-
-      // Refresh the snapshot (not just the list) so a second save in the
-      // same session diffs against what's actually in the DB now, not
-      // against the state from before this save.
-      await loadDetail(selected.id);
-
-      await loadLooks();
-    } catch(e: any) {
-      console.error(e);
-      setSaveError(e?.message || "Save failed — changes were not persisted.");
-    }
-    setSaving(false);
-  };
-
-  const setStatus = async (lookId: string, status: string, takedownReason?: string) => {
-    setSaving(true);
-    try {
-      const body: any = { status };
-      if (takedownReason) { body.takedown_reason = takedownReason; body.takedown_at = new Date().toISOString(); }
-      await sb(`looks?id=eq.${lookId}`, { method: "PATCH", prefer: "", body: JSON.stringify(body) });
-      await loadLooks();
     } catch(e) { console.error(e); }
     setSaving(false);
   };
 
-  const missingFields = (look: Look) => {
-    const m = [];
-    if (look.brand_count === 0) m.push("brands");
-    if (!look.scene) m.push("scene");
-    if (!look.gender) m.push("gender");
-    if (!look.season_year) m.push("season");
-    if (look.credit_count === 0) m.push("credits");
-    if (look.tag_count === 0) m.push("tags");
-    return m;
+  const saveNotes = async () => {
+    const look = filtered[idx];
+    if (!look) return;
+    setSavingNotes(true);
+    try {
+      await sb(`looks?id=eq.${look.id}`, { method:"PATCH", body: JSON.stringify({ notes }), prefer:"" });
+      setFiltered(prev => prev.map(l => l.id === look.id ? { ...l, notes } : l));
+      setLooks(prev => prev.map(l => l.id === look.id ? { ...l, notes } : l));
+      setEditingNotes(false);
+    } catch(e) { console.error(e); }
+    setSavingNotes(false);
   };
 
-  const inp = { background: C.lift3, border: "none" as const, color: C.text, padding: "8px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
-  const sel = { ...inp, cursor: "pointer" as const };
-
-  // Counts derived from all loaded looks (client-side)
-  const counts = {
-    draft: looks.filter(l => l.status === "draft").length,
-    published: looks.filter(l => l.status === "published").length,
-    archived: looks.filter(l => l.status === "archived").length,
+  const saveImageMode = async (mode: string | null) => {
+    const look = filtered[idx];
+    if (!look) return;
+    const newMode = look.image_mode === mode ? null : mode; // toggle off if already set
+    setSavingImageMode(true);
+    try {
+      await sb(`looks?id=eq.${look.id}`, { method: "PATCH", body: JSON.stringify({ image_mode: newMode }), prefer: "" });
+      setImageMode(newMode);
+      setFiltered(prev => prev.map(l => l.id === look.id ? { ...l, image_mode: newMode } : l));
+      setLooks(prev => prev.map(l => l.id === look.id ? { ...l, image_mode: newMode } : l));
+    } catch(e) { console.error(e); }
+    setSavingImageMode(false);
   };
 
-  const filteredLooks = looks.filter(l => {
-    if (statusFilter !== "all" && l.status !== statusFilter) return false;
-    if (search.trim()) {
-      const s = search.toLowerCase();
-      const matchesBrand = l.brands_display.toLowerCase().includes(s);
-      const matchesSource = (l.source_name || "").toLowerCase().includes(s);
-      if (!matchesBrand && !matchesSource) return false;
-    }
-    if (sceneFilter && l.scene !== sceneFilter) return false;
-    if (pubFilter && l.publication_id !== pubFilter) return false;
-    if (eventFilter && l.event_id !== eventFilter) return false;
-    return true;
-  });
+  const addTag = async () => {
+    if (!newName.trim() || !newType) return;
+    setAdding(true);
+    try {
+      const slug = newName.trim().toLowerCase().replace(/\s+/g,"-");
+      const [created] = await sb("tags", { method:"POST", body: JSON.stringify({ name:newName.trim(), slug, tag_type:newType }) });
+      setTagsByType(prev => {
+        const u = {...prev};
+        if (!u[newType]) u[newType] = [];
+        u[newType] = [...u[newType], created].sort((a,b) => a.name.localeCompare(b.name));
+        return u;
+      });
+      setNewName(""); setNewType(""); setShowAdd(false);
+      await toggleTag(created.id);
+    } catch(e) { console.error(e); }
+    setAdding(false);
+  };
 
-  const hasActiveFilters = search.trim() || sceneFilter || pubFilter || eventFilter;
-  const clearFilters = () => { setSearch(""); setSceneFilter(""); setPubFilter(""); setEventFilter(""); };
+  const look = filtered[idx];
+  const pct = filtered.length > 0 ? ((idx + 1) / filtered.length) * 100 : 0;
+  const orderedTypes = [
+    ...TAG_TYPE_ORDER.filter(t => tagsByType[t]),
+    ...Object.keys(tagsByType).filter(t => !TAG_TYPE_ORDER.includes(t)),
+  ];
+
+  if (loading) return (
+    <>
+      <style>{FONT_IMPORT}</style>
+      <div style={{background:C.bg,height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Inter,sans-serif"}}>
+        <span style={{fontSize:15,color:C.muted}}>Loading…</span>
+      </div>
+    </>
+  );
 
   return (
     <>
       <style>{`
         ${FONT_IMPORT}
         * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
-        .look-row:hover { background: #2a2a2a !important; }
-        .look-row.active { background: #2f2f2f !important; border-left: 2px solid #ececec !important; }
-        input::placeholder, textarea::placeholder { color: #666; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 3px; }
+        button:hover { filter: brightness(1.12); }
+        a:hover { opacity: 1 !important; }
+        .tag-btn:hover { background: #4a4a4a !important; }
+        .tag-btn.on:hover { filter: brightness(0.9) !important; }
+        input::placeholder { color: #888 !important; }
+        textarea::placeholder { color: #888 !important; }
       `}</style>
 
-      <div style={{ fontFamily: "Inter,sans-serif", background: C.bg, color: C.text, height: "calc(100vh - 44px)", display: "flex", flexDirection: "column", overflow: "hidden", fontSize: 14 }}>
+      <div style={{fontFamily:"Inter,sans-serif",background:C.bg,color:C.text,height:"calc(100vh - 44px)",display:"flex",flexDirection:"column",overflow:"hidden",fontSize:14,lineHeight:1.5}}>
 
-        {/* Toolbar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: `1px solid ${C.lift1}`, flexShrink: 0, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            {(["draft","published","archived","all"] as const).map(st => (
-              <button key={st} onClick={() => setStatusFilter(st)}
-                style={{ background: statusFilter===st ? C.lift2 : "transparent", border: "none", color: statusFilter===st ? C.text : C.muted, padding: "6px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif", fontWeight: statusFilter===st ? 600 : 400 }}>
-                {st.charAt(0).toUpperCase()+st.slice(1)}
-                {st !== "all" && counts[st] !== undefined && (
-                  <span style={{ marginLeft: 6, fontSize: 11, color: st==="draft" ? C.amber : C.muted }}>{counts[st]}</span>
-                )}
-              </button>
+        {/* ── Toolbar ── */}
+        <div style={{display:"flex",alignItems:"center",padding:"8px 20px",background:C.bg,gap:16,flexShrink:0,borderBottom:`1px solid ${C.lift1}`}}>
+          <div style={{flex:1,display:"flex",alignItems:"center",gap:10}}>
+            <div style={{flex:1,height:3,background:C.lift2,borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",background:C.white,width:`${pct}%`,transition:"width 0.3s",borderRadius:2}}/>
+            </div>
+            <span style={{fontSize:13,color:C.muted,whiteSpace:"nowrap",fontWeight:500}}>{idx+1} / {filtered.length}</span>
+          </div>
+
+          <select value={brandFilter} onChange={e => handleBrandFilter(e.target.value)}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
+            <option value="all">All Brands</option>
+            <option value="__unattributed__">Unattributed</option>
+            {brands.map((b:any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+
+          <select value={tagFilterId} onChange={e => handleTagFilter(e.target.value)}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500,opacity:tagFilterLoading?0.6:1}}>
+            <option value="all">{tagFilterLoading ? "Loading…" : "All Tags"}</option>
+            {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => (
+              <optgroup key={type} label={TYPE_LABELS[type] || type}>
+                {(tagsByType[type] || []).map((tag: any) => (
+                  <option key={tag.id} value={tag.id}>{tag.name}</option>
+                ))}
+              </optgroup>
             ))}
-          </div>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Brand or account…"
-            style={{ background: C.lift2, border: "none", color: C.text, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", width: 180, fontFamily: "Inter,sans-serif" }} />
-          <select value={sceneFilter} onChange={e => setSceneFilter(e.target.value)}
-            style={{ background: sceneFilter ? C.lift3 : C.lift2, border: "none", color: sceneFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif" }}>
-            <option value="">Scene</option>
-            <option value="runway">Runway</option>
-            <option value="behind_the_scenes">Backstage</option>
-            <option value="street">Street</option>
-            <option value="editorial">Editorial</option>
-            <option value="designer_showcase">Designer Showcase</option>
-            <option value="lookbook">Lookbook</option>
-            <option value="presentation">Presentation</option>
-            <option value="campaign">Campaign</option>
-            <option value="portrait">Portrait</option>
-            <option value="installation">Installation</option>
-            <option value="other">Other</option>
           </select>
-          <select value={pubFilter} onChange={e => setPubFilter(e.target.value)}
-            style={{ background: pubFilter ? C.lift3 : C.lift2, border: "none", color: pubFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif", maxWidth: 160 }}>
-            <option value="">Publication</option>
-            {pubList.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+
+          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setIdx(0); }}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
+            <option value="published">Published</option>
+            <option value="archived">Archived</option>
+            <option value="draft">Draft</option>
+            <option value="all">All Status</option>
           </select>
-          <select value={eventFilter} onChange={e => setEventFilter(e.target.value)}
-            style={{ background: eventFilter ? C.lift3 : C.lift2, border: "none", color: eventFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif", maxWidth: 180 }}>
-            <option value="">Event</option>
-            {events.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
+
+          <select value={sortMode} onChange={e => { setSortMode(e.target.value as any); setIdx(0); }}
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:500}}>
+            <option value="newest">Sort: Newest first</option>
+            <option value="oldest">Sort: Oldest first</option>
           </select>
-          {hasActiveFilters && (
-            <button onClick={clearFilters}
-              style={{ background: "none", border: "none", color: C.muted, fontSize: 12, cursor: "pointer", fontFamily: "Inter,sans-serif", padding: "0 4px", whiteSpace: "nowrap" }}>
-              Clear ×
+
+          <button onClick={() => { setUntaggedOnly(v => !v); setIdx(0); }}
+            style={{background:untaggedOnly?C.white:"#484848",border:"1px solid #606060",color:untaggedOnly?"#212121":C.text,padding:"7px 12px",fontSize:13,borderRadius:20,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:untaggedOnly?600:500}}>
+            Untagged only
+          </button>
+
+          <button onClick={() => { setPrimaryOnly(v => !v); setIdx(0); }}
+            title="Filter color tag results to looks whose primary star matches — same as the Living Grid bucket"
+            style={{background:primaryOnly?C.amber:"#484848",border:"1px solid #606060",color:primaryOnly?"#212121":C.text,padding:"7px 12px",fontSize:13,borderRadius:20,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:primaryOnly?600:500}}>
+            ★ Primary only
+          </button>
+
+          <input value={jumpInput} onChange={e => setJumpInput(e.target.value)} onKeyDown={handleJump}
+            placeholder="Go to #"
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,outline:"none",fontFamily:"Inter,sans-serif",width:80,textAlign:"center"}}
+          />
+
+          <div style={{display:"flex",background:C.lift1,borderRadius:20,padding:2,gap:2}}>
+            <button onClick={() => setBrowseMode(false)}
+              style={{background:!browseMode?C.white:"transparent",border:"none",color:!browseMode?"#212121":C.muted,padding:"5px 14px",fontSize:13,cursor:"pointer",borderRadius:18,fontFamily:"Inter,sans-serif",fontWeight:!browseMode?600:400,transition:"all 0.15s"}}>
+              Edit
             </button>
-          )}
-          <div style={{ flex: 1 }} />
-        </div>
-
-        {/* Body */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-          {/* List */}
-          <div style={{ width: selected ? "44%" : "100%", flexShrink: 0, overflowY: "auto", borderRight: selected ? `1px solid ${C.lift1}` : "none", transition: "width 0.2s" }}>
-            {loading ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 200, color: C.muted }}>Loading…</div>
-            ) : loadError ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 10, color: C.red, padding: 24, textAlign: "center" }}>
-                <div style={{ fontSize: 32 }}>⚠</div>
-                <div style={{ fontWeight: 600 }}>Couldn't load looks</div>
-                <div style={{ fontSize: 12, color: C.muted, maxWidth: 380, fontFamily: "monospace", wordBreak: "break-word" }}>{loadError}</div>
-                <button onClick={loadLooks} style={{ marginTop: 4, background: C.lift2, border: "none", color: C.text, padding: "7px 16px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Retry</button>
-              </div>
-            ) : filteredLooks.length === 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 8, color: C.muted }}>
-                <div style={{ fontSize: 32 }}>✓</div>
-                <div>No {statusFilter === "all" ? "" : statusFilter} looks{hasActiveFilters ? " matching current filters" : ""}</div>
-              </div>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${C.lift1}` }}>
-                    {["Image","Brands","Scene","Credits","Tags","Status",""].map(h => (
-                      <th key={h} style={{ padding: "8px 10px", fontSize: 11, fontWeight: 600, color: C.muted, textAlign: "left", letterSpacing: "0.06em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLooks.map(look => {
-                    const isActive = selected?.id === look.id;
-                    return (
-                      <tr key={look.id} id={`look-row-${look.id}`} className={`look-row${isActive?" active":""}`}
-                        onClick={() => selectLook(look)}
-                        style={{ borderBottom: `1px solid ${C.lift1}`, cursor: "pointer", background: isActive ? C.lift1 : "transparent", borderLeft: isActive ? `2px solid ${C.white}` : "2px solid transparent" }}>
-                        <td style={{ padding: "6px 10px", width: 52 }}>
-                          {look.cloudinary_url
-                            ? <img src={look.cloudinary_url} alt="" style={{ width: 40, height: 48, objectFit: "cover", borderRadius: 4, display: "block" }} />
-                            : <div style={{ width: 40, height: 48, background: C.lift2, borderRadius: 4 }} />}
-                        </td>
-                        <td style={{ padding: "6px 10px", maxWidth: 160 }}>
-                          <div style={{ fontSize: 13, fontWeight: 500, color: look.brands_display ? C.text : C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{look.brands_display || "—"}</div>
-                          {look.source_name && !look.brands_display && <div style={{ fontSize: 11, color: C.muted }}>{look.source_name}</div>}
-                        </td>
-                        <td style={{ padding: "6px 10px" }}><span style={{ fontSize: 12, color: look.scene ? C.text : C.dim }}>{look.scene || "—"}</span></td>
-                        <td style={{ padding: "6px 10px" }}><span style={{ fontSize: 12, color: look.credit_count > 0 ? C.green : C.dim }}>{look.credit_count}</span></td>
-                        <td style={{ padding: "6px 10px" }}><span style={{ fontSize: 12, color: look.tag_count > 0 ? C.text : C.dim }}>{look.tag_count}</span></td>
-                        <td style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>
-                          <span style={{ fontSize: 11, color: look.status==="draft" ? C.amber : look.status==="published" ? C.green : C.dim, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{look.status}</span>
-                          {look.is_key_look && <span style={{ marginLeft: 5, fontSize: 10, color: C.white, background: C.lift2, padding: "1px 5px", borderRadius: 10 }}>key</span>}
-                        </td>
-                        <td style={{ padding: "6px 10px" }} onClick={e => e.stopPropagation()}>
-                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                            <a href={`/?look=${look.id}&status=${look.status}`}
-                              style={{ fontSize: 11, color: C.muted, textDecoration: "none", background: C.lift2, padding: "4px 10px", borderRadius: 12, fontFamily: "Inter,sans-serif", whiteSpace: "nowrap" }}>
-                              ✦ Tags
-                            </a>
-                            {look.status==="draft" && <button onClick={() => setStatus(look.id,"published")} style={{ background: C.green, border: "none", color: "#fff", padding: "4px 10px", fontSize: 11, cursor: "pointer", borderRadius: 12, fontWeight: 600, fontFamily: "Inter,sans-serif" }}>Publish</button>}
-                            {look.status==="published" && <button onClick={() => setStatus(look.id,"archived","manual")} style={{ background: "transparent", border: `1px solid ${C.lift2}`, color: C.muted, padding: "4px 10px", fontSize: 11, cursor: "pointer", borderRadius: 12, fontFamily: "Inter,sans-serif" }}>Archive</button>}
-                            {look.status==="archived" && <button onClick={() => setStatus(look.id,"published")} style={{ background: "transparent", border: `1px solid ${C.lift2}`, color: C.muted, padding: "4px 10px", fontSize: 11, cursor: "pointer", borderRadius: 12, fontFamily: "Inter,sans-serif" }}>Restore</button>}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeletePending(look);
-                                setDeleteError(null);
-                              }}
-                              style={{ background: "transparent", border: `1px solid ${C.red}`, color: C.red, padding: "4px 10px", fontSize: 11, cursor: "pointer", borderRadius: 12, fontFamily: "Inter,sans-serif" }}>
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+            <button onClick={() => setBrowseMode(true)}
+              style={{background:browseMode?C.white:"transparent",border:"none",color:browseMode?"#212121":C.muted,padding:"5px 14px",fontSize:13,cursor:"pointer",borderRadius:18,fontFamily:"Inter,sans-serif",fontWeight:browseMode?600:400,transition:"all 0.15s"}}>
+              Browse
+            </button>
           </div>
 
-          {/* Detail panel */}
-          {selected && (
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-
-              <div style={{ position: "relative", background: "#181818", flexShrink: 0 }}>
-                <img src={selected.cloudinary_url} alt="" style={{ width: "100%", maxHeight: 320, objectFit: "contain", display: "block" }} />
-                <button onClick={() => setSelected(null)}
-                  style={{ position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.7)", border: "none", color: C.text, width: 30, height: 30, borderRadius: 15, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Inter,sans-serif" }}>×</button>
-                {selected.source_url && (
-                  <a href={selected.source_url} target="_blank" rel="noreferrer"
-                    style={{ position: "absolute", top: 10, left: 10, fontSize: 12, color: C.text, textDecoration: "none", background: "rgba(0,0,0,0.7)", padding: "5px 10px", borderRadius: 12, fontWeight: 500, fontFamily: "Inter,sans-serif" }}>↗ source</a>
-                )}
-                <a href={`/?look=${selected.id}&status=${selected.status}`}
-                  style={{ position: "absolute", top: 10, left: selected.source_url ? 90 : 10, fontSize: 12, color: C.muted, textDecoration: "none", background: "rgba(0,0,0,0.7)", padding: "5px 10px", borderRadius: 12, fontFamily: "Inter,sans-serif" }}>✦ Tags</a>
-              </div>
-
-              <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
-
-                <div style={{ fontSize: 12, color: C.muted }}>
-                  Ingested {new Date(selected.created_at).toLocaleDateString()} · {selected.credit_count} credits · {selected.tag_count} tags
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-
-                  <SectionHead title="Attribution" />
-
-                  <F label="Brands" span2>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {brandRows.map(b => (
-                        <div key={b.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <Typeahead items={brands} value={b.brand} onChange={(br: any) => updateBrandRow(b.key, br)} onClear={() => updateBrandRow(b.key, null)} placeholder="Search or create brand..." onCreateClick={(name: string) => setBrandModal({ name, target: `brandrow:${b.key}` })} />
-                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: b.brand ? C.text : C.dim, cursor: b.brand ? "pointer" : "default", whiteSpace: "nowrap", userSelect: "none" }}>
-                            <input type="checkbox" checked={b.isCourtesy} disabled={!b.brand} onChange={() => toggleBrandCourtesy(b.key)} style={{ accentColor: C.white, cursor: "pointer" }} />
-                            Courtesy
-                          </label>
-                          <button tabIndex={-1} onClick={() => removeBrandRow(b.key)} style={{ background: "none", border: "none", color: C.muted, fontSize: 20, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
-                        </div>
-                      ))}
-                      <button onClick={addBrandRow} style={{ alignSelf: "flex-start", background: "transparent", border: `1.5px dashed ${C.lift3}`, color: C.muted, padding: "7px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add brand</button>
-                    </div>
-                  </F>
-
-                  <F label="" span2>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: C.text, userSelect: "none" }}>
-                      <input type="checkbox" checked={editIsCollab} onChange={e => setEditIsCollab(e.target.checked)} style={{ accentColor: C.white, cursor: "pointer" }} />
-                      This is a collaboration
-                      <span style={{ fontSize: 11, color: C.dim, fontStyle: "italic", marginLeft: 4 }}>— official co-creation between the brands above</span>
-                    </label>
-                  </F>
-
-                  <F label="Contributors" span2>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button onClick={copyContributors} disabled={checkedContributors.size === 0}
-                          style={{ background: clipboardFlash ? C.green : C.lift2, border: "none", color: clipboardFlash ? "#fff" : C.muted, padding: "5px 12px", fontSize: 12, cursor: checkedContributors.size === 0 ? "default" : "pointer", borderRadius: 16, fontFamily: "Inter,sans-serif", transition: "all 0.2s", opacity: checkedContributors.size === 0 ? 0.35 : 1 }}>
-                          {clipboardFlash ? "Copied ✓" : `Copy${checkedContributors.size > 0 ? ` (${checkedContributors.size})` : ""}`}
-                        </button>
-                        {checkedContributors.size > 0 && (
-                          <button onClick={() => { setContributors(prev => prev.filter(c => !checkedContributors.has(c.key))); clearChecked(); }}
-                            style={{ background: "none", border: `1px solid ${C.red}`, color: C.red, padding: "5px 12px", fontSize: 12, cursor: "pointer", borderRadius: 16, fontFamily: "Inter,sans-serif" }}>
-                            Delete ({checkedContributors.size})
-                          </button>
-                        )}
-                        {contributorClipboard.length > 0 && (
-                          <button onClick={pasteContributors}
-                            style={{ background: C.lift2, border: `1px solid ${C.lift3}`, color: C.text, padding: "5px 12px", fontSize: 12, cursor: "pointer", borderRadius: 16, fontFamily: "Inter,sans-serif" }}>
-                            Paste ({contributorClipboard.length})
-                          </button>
-                        )}
-                        {checkedContributors.size > 0 && (
-                          <button onClick={clearChecked}
-                            style={{ background: "none", border: "none", color: C.dim, fontSize: 12, cursor: "pointer", fontFamily: "Inter,sans-serif", padding: "5px 0" }}>
-                            Clear
-                          </button>
-                        )}
-                      </div>
-                      {contributors.map((c: any) => (
-                        <div key={c.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <input type="checkbox" checked={checkedContributors.has(c.key)} onChange={() => toggleContributorCheck(c.key)}
-                            style={{ accentColor: C.white, width: 14, height: 14, cursor: "pointer", flexShrink: 0 }} />
-                          <Typeahead items={people} value={c.person} onChange={(p: any) => updateContributorPerson(c.key, p)} onClear={() => updateContributorPerson(c.key, null)} placeholder="Search or create person..." onCreateClick={(name: string) => setPersonModal({ name, role: c.role?.slug ? c.role.slug.replace(/-/g, "_") : null, target: `contributor:${c.key}` })} />
-                          {/* ingest_handle provenance tag */}
-                          {c.ingest_handle && (
-                            <span style={{ fontSize: 11, color: C.muted, background: C.lift2, padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap", flexShrink: 0 }}>
-                              @{c.ingest_handle}
-                            </span>
-                          )}
-                          <Typeahead width={160} items={creditRoles} value={c.role} onChange={(r: any) => updateContributorRole(c.key, r)} onClear={() => updateContributorRole(c.key, null)} placeholder="Role..." onCreateClick={(name: string) => createRole(name, c.key)} />
-                        </div>
-                      ))}
-                      <button onClick={addContributor} style={{ alignSelf: "flex-start", background: "transparent", border: `1.5px dashed ${C.lift3}`, color: C.muted, padding: "7px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add contributor</button>
-                    </div>
-                  </F>
-
-                  <SectionHead title="Context" />
-
-                  <F label="Scene">
-                    <select value={editScene} onChange={e => setEditScene(e.target.value)} style={sel}>
-                      <option value="">— select —</option>
-                      <option value="runway">Runway</option>
-                      <option value="behind_the_scenes">Backstage</option>
-                      <option value="street">Street</option>
-                      <option value="editorial">Editorial</option>
-                      <option value="designer_showcase">Designer Showcase</option>
-                      <option value="lookbook">Lookbook</option>
-                      <option value="presentation">Presentation</option>
-                      <option value="campaign">Campaign</option>
-                      <option value="portrait">Portrait</option>
-                      <option value="installation">Installation</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </F>
-
-                  <F label="Gender">
-                    <select value={editGender} onChange={e => setEditGender(e.target.value)} style={sel}>
-                      <option value="">— select —</option>
-                      <option value="womenswear">Womenswear</option>
-                      <option value="menswear">Menswear</option>
-                      <option value="unisex">Unisex</option>
-                    </select>
-                  </F>
-
-                  <F label="Season">
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <select value={editSeasonTerm} onChange={e => setEditSeasonTerm(e.target.value)} style={{ ...sel, flex: 1 }}>
-                        <option value="">— term —</option>
-                        <option value="Spring">Spring</option>
-                        <option value="Summer">Summer</option>
-                        <option value="Fall">Fall</option>
-                        <option value="Winter">Winter</option>
-                        <option value="Resort">Resort</option>
-                        <option value="Pre-Fall">Pre-Fall</option>
-                        <option value="No Season">No Season</option>
-                      </select>
-                      <input value={editSeasonYear} onChange={e => setEditSeasonYear(e.target.value)} placeholder="2025" maxLength={4} style={{ ...inp, width: 68, flexShrink: 0 }} />
-                    </div>
-                  </F>
-
-                  <F label="Publish Date">
-                    <input type="date" value={editPublishDate} onChange={e => setEditPublishDate(e.target.value)} style={inp} />
-                  </F>
-
-                  <F label="Event" span2>
-                    <Typeahead items={events} value={editEvent} onChange={setEditEvent} onClear={() => setEditEvent(null)} placeholder="Search event..." />
-                  </F>
-
-                  <F label="Key Look" span2>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: C.text, userSelect: "none", paddingTop: 2 }}>
-                      <input type="checkbox" checked={editKeyLook} onChange={e => setEditKeyLook(e.target.checked)} style={{ accentColor: C.white, cursor: "pointer", width: 15, height: 15 }} />
-                      Mark as key look
-                    </label>
-                  </F>
-
-                  <SectionHead title="Source" />
-
-                  <F label="Post URL" span2>
-                    <input value={editSourceUrl} onChange={e => setEditSourceUrl(e.target.value)} placeholder="https://www.instagram.com/p/..." style={inp} />
-                  </F>
-
-                  <F label="Source Account" span2>
-                    <input value={editSourceName} onChange={e => setEditSourceName(e.target.value)} placeholder="@account_handle" style={inp} />
-                  </F>
-
-                  <F label="Image URL (Cloudinary)" span2>
-                    <input value={editCloudinaryUrl} onChange={e => setEditCloudinaryUrl(e.target.value)} placeholder="https://res.cloudinary.com/..." style={inp} />
-                  </F>
-
-                  <F label="Publication" span2>
-                    <Typeahead items={pubList} value={editPublication} onChange={setEditPublication} onClear={() => { setEditPublication(null); setEditPublicationIssueMonth(""); setEditPublicationIssueYear(""); }} placeholder="e.g. Vogue, i-D, Dazed..." onCreateClick={(name: string) => setPublicationModal(name)} />
-                  </F>
-
-                  <F label="Issue Month">
-                    <select value={editPublicationIssueMonth} onChange={e => setEditPublicationIssueMonth(e.target.value)}
-                      style={{ ...sel, opacity: editPublication ? 1 : 0.4 }} disabled={!editPublication}>
-                      <option value="">— month —</option>
-                      {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
-                        <option key={i+1} value={String(i+1)}>{m}</option>
-                      ))}
-                    </select>
-                  </F>
-
-                  <F label="Issue Year">
-                    <input value={editPublicationIssueYear} onChange={e => setEditPublicationIssueYear(e.target.value)}
-                      placeholder="2024" maxLength={4}
-                      style={{ ...inp, opacity: editPublication ? 1 : 0.4 }} disabled={!editPublication} />
-                  </F>
-
-                  <SectionHead title="Collection" />
-
-                  <F label="Collection Title" span2>
-                    <input value={editCollectionTitle} onChange={e => setEditCollectionTitle(e.target.value)} placeholder="e.g. Folklorics, Dual Mandate" style={inp} />
-                  </F>
-
-                  <F label="Collection Description" span2>
-                    <textarea value={editCollectionDesc} onChange={e => setEditCollectionDesc(e.target.value)} rows={3} placeholder="Editorial narrative about this collection..." style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
-                  </F>
-
-                  <SectionHead title="Notes" />
-
-                  <F label="" span2>
-                    <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={2} placeholder="Internal scratchpad..." style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
-                  </F>
-                </div>
-
-                {missingFields(selected).length > 0 && (
-                  <div style={{ background: "#2a1f0a", border: "1px solid #5a3a0a", borderRadius: 10, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 12, color: C.amber, fontWeight: 600, marginBottom: 3 }}>Missing fields</div>
-                    <div style={{ fontSize: 12, color: "#c8a060" }}>{missingFields(selected).join(", ")}</div>
-                  </div>
-                )}
-
-                {/* Save — form fields only, status actions are at the top */}
-                <div style={{ paddingBottom: 20, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
-                  <button onClick={saveEdits} disabled={saving}
-                    style={{ background: C.white, border: "none", color: "#212121", padding: "9px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving ? 0.5 : 1 }}>
-                    {saving ? "Saving…" : "Save changes"}
-                  </button>
-                  {saveError && (
-                    <span style={{ fontSize: 12, color: saveError.startsWith("Saved,") ? C.amber : C.red, maxWidth: 480 }}>
-                      {saveError.startsWith("Saved,") ? "⚠ " : "✕ "}{saveError}
-                    </span>
-                  )}
-                </div>
-
-              </div>
-            </div>
-          )}
+          <span style={{fontSize:12,color:flash&&!saving?C.green:C.muted,opacity:saving||flash?1:0,transition:"opacity 0.3s",minWidth:60,textAlign:"right",fontWeight:500}}>
+            {saving ? "saving…" : "saved ✓"}
+          </span>
         </div>
-      </div>
 
-      {personModal && (
-        <CreatePersonModal
-          initialName={personModal.name}
-          role={personModal.role}
-          roles={creditRoles}
-          onCreateRole={createRoleForModal}
-          onClose={() => setPersonModal(null)}
-          onSave={(created: any) => {
-            setPeople(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
-            if (personModal.target.startsWith("contributor:")) updateContributorPerson(personModal.target.split(":")[1], created);
-            setPersonModal(null);
-          }}
-        />
-      )}
-
-      {brandModal && (
-        <CreateBrandModal
-          initialName={brandModal.name}
-          locations={locations}
-          people={people}
-          onPersonCreated={(p: any) => setPeople(prev => [...prev, p].sort((a, b) => a.name.localeCompare(b.name)))}
-          onClose={() => setBrandModal(null)}
-          onSave={(created: any) => {
-            setBrands(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
-            if (brandModal.target.startsWith("brandrow:")) updateBrandRow(brandModal.target.split(":")[1], created);
-            setBrandModal(null);
-          }}
-        />
-      )}
-
-      {publicationModal && (
-        <CreatePublicationModal
-          initialName={publicationModal}
-          onClose={() => setPublicationModal(null)}
-          onSave={(created: any) => {
-            setPubList(prev => [...prev, created].sort((a: any, b: any) => a.name.localeCompare(b.name)));
-            setEditPublication(created);
-            setPublicationModal(null);
-          }}
-        />
-      )}
-
-      {deletePending && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
-          onClick={() => { if (!deleting) { setDeletePending(null); setDeleteError(null); } }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 20px 60px rgba(0,0,0,0.7)" }}>
-            <div style={{ padding: "20px 22px 16px", borderBottom: `1px solid ${C.lift2}` }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 6 }}>Delete this look?</div>
-              <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
-                {deletePending.brands_display || deletePending.source_name || "Unattributed look"}
+        {/* ── Browse Mode ── */}
+        {browseMode && (
+          <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+            <div style={{width:220,flexShrink:0,borderRight:`1px solid ${C.lift1}`,overflowY:"auto",padding:"16px 12px",display:"flex",flexDirection:"column",gap:16}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted}}>Filter</span>
+                {browseTagIds.size > 0 && (
+                  <button onClick={() => setBrowseTagIds(new Set())}
+                    style={{background:"transparent",border:"none",color:C.muted,fontSize:12,cursor:"pointer",padding:0,fontFamily:"Inter,sans-serif"}}>
+                    Clear {browseTagIds.size}
+                  </button>
+                )}
               </div>
+
+              <div style={{fontSize:13,color:C.text,fontWeight:500}}>
+                <span style={{color:C.white,fontWeight:700}}>{browseLooks.length}</span>
+                <span style={{color:C.muted}}> looks</span>
+              </div>
+
+              {TAG_TYPE_ORDER.filter(type => tagsByType[type]).map(type => {
+                const isExpanded = expandedTypes.has(type);
+                const tags = tagsByType[type] || [];
+                return (
+                  <div key={type}>
+                    <button onClick={() => toggleExpandedType(type)}
+                      style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",background:"transparent",border:"none",cursor:"pointer",padding:"0 0 6px 0",marginBottom:6,borderBottom:`1px solid ${C.lift1}`}}>
+                      <span style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0"}}>
+                        {TYPE_LABELS[type] || type}
+                      </span>
+                      <span style={{fontSize:10,color:C.dim}}>{isExpanded ? "▲" : "▼"}</span>
+                    </button>
+                    {isExpanded && (
+                      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                        {tags.map((tag: any) => {
+                          const checked = browseTagIds.has(tag.id);
+                          const count = tagCounts[tag.id];
+                          const counting = loadingCounts.has(tag.id);
+                          if (count === 0 && !checked) return null;
+                          return (
+                            <label key={tag.id} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"3px 4px",borderRadius:6,background:checked?C.lift2:"transparent"}}>
+                              <input type="checkbox" checked={checked}
+                                onChange={() => toggleBrowseTag(tag.id)}
+                                style={{accentColor:C.white,width:13,height:13,cursor:"pointer"}}
+                              />
+                              <span style={{fontSize:13,color:checked?C.text:C.muted,flex:1}}>{tag.name}</span>
+                              <span style={{fontSize:11,color:C.dim}}>
+                                {counting ? "…" : count !== undefined ? count : ""}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div style={{ padding: "16px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
-                This removes the Supabase record, all credits and tags, and the Cloudinary image.
-                <span style={{ color: C.red, fontWeight: 500 }}> Cannot be undone.</span>
-              </div>
-              {deleteError && (
-                <div style={{ fontSize: 12, color: C.red, background: "rgba(224,90,78,0.1)", border: `1px solid ${C.red}`, borderRadius: 8, padding: "8px 12px" }}>
-                  {deleteError}
+
+            <div id="browse-grid" style={{flex:1,overflowY:"auto",padding:16}}>
+              {browseLooks.length === 0 ? (
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.dim,fontSize:14}}>
+                  No looks match the selected tags
+                </div>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(5, 1fr)",gap:8}}>
+                  {browseLooks.map((l: any) => (
+                    <div key={l.id} onClick={() => enterEditFromBrowse(l.id)}
+                      style={{cursor:"pointer",borderRadius:10,overflow:"hidden",background:C.lift1,transition:"transform 0.1s"}}
+                      onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.02)")}
+                      onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}>
+                      <div style={{paddingTop:"133%",position:"relative",background:"#181818"}}>
+                        <img src={l.cloudinary_url} alt="" loading="lazy"
+                          style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}
+                        />
+                        <span style={{
+                          position:"absolute", top:6, right:6,
+                          fontSize:9, fontWeight:700, letterSpacing:"0.07em",
+                          textTransform:"uppercase", padding:"2px 6px", borderRadius:6,
+                          background: l.status === "published" ? "rgba(76,175,110,0.85)" : l.status === "draft" ? "rgba(240,165,0,0.85)" : "rgba(80,80,80,0.85)",
+                          color: "#fff",
+                        }}>{l.status}</span>
+                      </div>
+                      <div style={{padding:"5px 8px"}}>
+                        <span style={{fontSize:12,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"block"}}>
+                          {l.brands?.name || "—"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-            <div style={{ padding: "14px 22px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button onClick={() => { setDeletePending(null); setDeleteError(null); }} disabled={deleting}
-                style={{ background: C.lift2, border: "none", color: C.muted, padding: "9px 20px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif", opacity: deleting ? 0.5 : 1 }}>
-                Cancel
-              </button>
-              <button onClick={deleteLook} disabled={deleting} autoFocus
-                style={{ background: C.red, border: "none", color: "#fff", padding: "9px 22px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: deleting ? 0.5 : 1 }}>
-                {deleting ? "Deleting…" : "Yes, delete"}
+          </div>
+        )}
+
+        {/* ── Edit Mode ── */}
+        {!browseMode && (
+          <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+
+            <div style={{position:"absolute",top:52,left:8,zIndex:10}}>
+              <button onClick={returnToBrowse}
+                style={{background:C.lift2,border:"none",color:C.muted,padding:"5px 12px",fontSize:12,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",display:"flex",alignItems:"center",gap:6}}>
+                ← Browse
               </button>
             </div>
+
+            <div style={{width:"50%",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:`1px solid ${C.lift1}`}}>
+              {look ? (
+                <>
+                  <div style={{flex:1,minHeight:0,background:"#181818",position:"relative",overflow:"hidden"}}>
+                    <img key={look.cloudinary_url} src={look.cloudinary_url} alt=""
+                      style={{width:"100%",height:"100%",objectFit:"contain",display:"block"}}
+                    />
+                  </div>
+
+                  <div style={{flexShrink:0,background:C.lift1,padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                        <span style={{fontSize:15,fontWeight:600,color:C.text}}>{look.brands?.name || "—"}</span>
+                        {look.season_display && <span style={{fontSize:12,color:C.muted}}>{look.season_display}</span>}
+                        {look.status && (
+                          <span style={{
+                            fontSize:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",
+                            color: look.status === "published" ? C.green : look.status === "archived" ? C.muted : C.amber,
+                            background: `${look.status === "published" ? C.green : look.status === "archived" ? C.muted : C.amber}22`,
+                            padding:"2px 7px",borderRadius:10
+                          }}>{look.status}</span>
+                        )}
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        {/* Image mode toggle */}
+                        <div style={{display:"flex",background:C.lift2,borderRadius:20,padding:2,gap:2,opacity:savingImageMode?0.5:1}}>
+                          {[
+                            { value: "color", label: "Color" },
+                            { value: "black_and_white", label: "B&W" },
+                          ].map(({ value, label }) => (
+                            <button key={value} onClick={() => saveImageMode(value)}
+                              style={{
+                                background: imageMode === value ? C.white : "transparent",
+                                border: "none",
+                                color: imageMode === value ? "#212121" : C.muted,
+                                padding: "4px 10px", fontSize: 12,
+                                cursor: "pointer", borderRadius: 18,
+                                fontFamily: "Inter,sans-serif",
+                                fontWeight: imageMode === value ? 600 : 400,
+                                transition: "all 0.15s",
+                              }}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {look.source_url && (
+                          <a href={look.source_url} target="_blank" rel="noreferrer"
+                            style={{fontSize:12,color:C.text,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,fontWeight:500}}>
+                            ↗ source
+                          </a>
+                        )}
+                        <a href={`/review?look=${look.id}`}
+                          style={{fontSize:12,color:C.muted,textDecoration:"none",background:C.lift2,padding:"5px 12px",borderRadius:20,fontWeight:500}}>
+                          → Review
+                        </a>
+                        <span style={{fontSize:13,color:C.muted,fontWeight:500}}>
+                          <span style={{color:C.text,fontWeight:600}}>{activeTags.size}</span> tags
+                          {aiApprovedTagIds.size > 0 && humanTagIds.size < activeTags.size && (
+                            <span style={{color:C.green,fontSize:11,marginLeft:4}}>
+                              ({activeTags.size - humanTagIds.size} AI)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    {!editingNotes ? (
+                      <div onClick={() => setEditingNotes(true)}
+                        style={{fontSize:14,color:notes?C.text:C.dim,background:C.lift2,borderRadius:10,padding:"8px 12px",cursor:"pointer",lineHeight:1.5,fontStyle:notes?"normal":"italic",maxHeight:72,overflowY:"auto"}}>
+                        {notes || "Add notes…"}
+                      </div>
+                    ) : (
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <textarea value={notes} onChange={e => setNotes(e.target.value)} autoFocus rows={2}
+                          style={{background:"#484848",border:"1.5px solid #fff",color:C.text,padding:"8px 12px",fontSize:14,borderRadius:10,outline:"none",resize:"none",fontFamily:"Inter,sans-serif",lineHeight:1.5,width:"100%"}}
+                        />
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={saveNotes} disabled={savingNotes}
+                            style={{background:C.white,border:"none",color:"#212121",padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                            {savingNotes?"…":"Save"}
+                          </button>
+                          <button onClick={() => { setEditingNotes(false); setNotes(filtered[idx]?.notes||""); }}
+                            style={{background:C.lift2,border:"none",color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:2}}>
+                      <button onClick={prev}
+                        style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===0?0.25:1}}>
+                        ← Prev
+                      </button>
+                      <span style={{fontSize:11,color:C.dim}}>arrow keys</span>
+                      <button onClick={next}
+                        style={{background:C.lift2,border:"none",color:C.text,padding:"8px 20px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif",fontWeight:500,opacity:idx===filtered.length-1?0.25:1}}>
+                        Next →
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.dim,fontSize:13}}>No looks</div>
+              )}
+            </div>
+
+            <div style={{flex:1,overflowY:"auto",padding:"20px 24px",display:"flex",flexDirection:"column",gap:20,background:C.bg}}>
+
+              {/* AI tag legend — shown when current look has AI-only tags */}
+              {aiApprovedTagIds.size > humanTagIds.size && (
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(76,175,110,0.08)",borderRadius:10,border:"1px solid rgba(76,175,110,0.2)"}}>
+                  <span style={{fontSize:12,color:C.green}}>✦</span>
+                  <span style={{fontSize:12,color:C.muted}}>Green tags were applied automatically — click to confirm, or leave as-is</span>
+                </div>
+              )}
+
+              {orderedTypes.map(type => (
+                <div key={type}>
+                  <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:"#b0aec0",paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
+                    {TYPE_LABELS[type]||type}
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {(tagsByType[type]||[]).map(tag => {
+                      const on = activeTags.has(tag.id);
+                      const isHumanConfirmed = humanTagIds.has(tag.id);
+                      const isAiOnly = on && !isHumanConfirmed;
+                      const isColor = type === "color";
+                      const isPrimary = primaryTagId === tag.id;
+                      return (
+                        <div key={tag.id} style={{display:"inline-flex",alignItems:"center",gap:0}}>
+                          {isColor && on && (
+                            <button onClick={e => { e.stopPropagation(); setPrimary(tag.id); }}
+                              title={isPrimary ? "Primary color — click to clear" : "Set as primary color"}
+                              style={{background:isPrimary?C.amber:C.lift2,border:"none",color:isPrimary?"#212121":C.muted,padding:"6px 8px 6px 10px",fontSize:12,cursor:"pointer",borderRadius:"20px 0 0 20px",fontFamily:"Inter,sans-serif",lineHeight:1,transition:"all 0.1s"}}>
+                              {isPrimary ? "★" : "☆"}
+                            </button>
+                          )}
+                          <button
+                            className={`tag-btn${on ? " on" : ""}`}
+                            onClick={() => toggleTag(tag.id)}
+                            title={isAiOnly ? "AI-tagged — click to confirm" : (tag.definition || undefined)}
+                            style={{
+                              background: isHumanConfirmed ? C.white : isAiOnly ? "rgba(76,175,110,0.18)" : C.lift1,
+                              border: isAiOnly ? "1px solid rgba(76,175,110,0.35)" : "none",
+                              borderRight: isAiOnly ? "none" : undefined,
+                              color: isHumanConfirmed ? "#212121" : isAiOnly ? C.green : C.text,
+                              padding: "6px 14px",
+                              fontSize: 13,
+                              fontWeight: isHumanConfirmed ? 600 : 400,
+                              cursor: "pointer",
+                              borderRadius: `${isColor && on ? 0 : 20}px ${isAiOnly ? 0 : 20}px ${isAiOnly ? 0 : 20}px ${isColor && on ? 0 : 20}px`,
+                              fontFamily: "Inter,sans-serif",
+                              transition: "all 0.1s",
+                              textDecoration: tag.definition ? "underline dotted" : "none",
+                              textUnderlineOffset: 3,
+                            }}>
+                            {tag.name}
+                            {isHumanConfirmed && !isColor ? " ✓" : ""}
+                            {isAiOnly ? " ✦" : ""}
+                          </button>
+                          {isAiOnly && (
+                            <button onClick={e => { e.stopPropagation(); rejectTag(tag.id); }}
+                              title="Dismiss — not a match"
+                              onMouseEnter={e => { e.currentTarget.style.background = "rgba(224,90,78,0.25)"; e.currentTarget.style.color = C.red; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = "rgba(76,175,110,0.18)"; e.currentTarget.style.color = C.green; }}
+                              style={{
+                                background: "rgba(76,175,110,0.18)",
+                                border: "1px solid rgba(76,175,110,0.35)",
+                                borderLeft: "1px solid rgba(255,255,255,0.15)",
+                                color: C.green,
+                                padding: "6px 10px",
+                                fontSize: 13,
+                                lineHeight: 1,
+                                cursor: "pointer",
+                                borderRadius: "0 20px 20px 0",
+                                fontFamily: "Inter,sans-serif",
+                                transition: "all 0.1s",
+                              }}>
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <div>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:C.muted,paddingBottom:8,marginBottom:8,borderBottom:`1px solid ${C.lift1}`}}>
+                  New Tag
+                </div>
+                {!showAdd ? (
+                  <button onClick={() => setShowAdd(true)}
+                    style={{background:"transparent",border:`1.5px dashed ${C.lift2}`,color:C.muted,padding:"6px 16px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                    + Add tag
+                  </button>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:300}}>
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Tag name"
+                      onKeyDown={e => e.key==="Enter" && addTag()} autoFocus
+                      style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",fontFamily:"Inter,sans-serif"}}/>
+                    <select value={newType} onChange={e => setNewType(e.target.value)}
+                      style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"9px 14px",fontSize:13,borderRadius:12,outline:"none",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+                      <option value="">Select type…</option>
+                      {orderedTypes.map(t => <option key={t} value={t}>{TYPE_LABELS[t]||t}</option>)}
+                    </select>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={addTag} disabled={adding}
+                        style={{background:C.white,border:"none",color:"#212121",padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                        {adding ? "…" : "Add & Apply"}
+                      </button>
+                      <button onClick={() => { setShowAdd(false); setNewName(""); setNewType(""); }}
+                        style={{background:C.lift2,border:"none",color:C.muted,padding:"8px 18px",fontSize:13,cursor:"pointer",borderRadius:20,fontFamily:"Inter,sans-serif"}}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </>
   );
 }
