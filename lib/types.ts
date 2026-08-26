@@ -6,10 +6,13 @@
 //   - people.instagram_url        (renamed from instagram_handle — holds full URLs)
 //   - brands.instagram_handle     (unchanged)
 //   - events.instagram_handle     (unchanged)
+//
+// NOTE (Aug 2026): The credit_order column was dropped from both look_credits
+// and look_brand_credits by the flip_designer_attribution_and_drop_credit_order
+// migration. Ordering now derives from created_at + brand_id where display
+// order actually matters. Do not re-add credit_order fields here.
 // ─────────────────────────────────────────────────────────────────────────────
-
 export type LookStatus = "draft" | "published" | "archived";
-
 export interface Look {
   id: string;
   cloudinary_url: string | null;
@@ -35,7 +38,6 @@ export interface Look {
   slug: string | null;
   created_at: string | null;
 }
-
 export interface Person {
   id: string;
   name: string;
@@ -46,7 +48,6 @@ export interface Person {
   profile_image: string | null;
   created_at: string | null;
 }
-
 export interface Brand {
   id: string;
   name: string;
@@ -57,7 +58,6 @@ export interface Brand {
   city_id: string | null;
   card_image_url: string | null;
 }
-
 export interface EventRow {
   id: string;
   name: string;
@@ -72,7 +72,6 @@ export interface EventRow {
   recurrence: string | null;
   year_founded: number | null;
 }
-
 export interface Tag {
   id: string;
   name: string;
@@ -81,14 +80,12 @@ export interface Tag {
   parent_tag_id: string | null;
   definition: string | null;
 }
-
 export interface CreditRole {
   id: string;
   slug: string;
   name: string;
   sort_order: number | null;
 }
-
 export interface LookCredit {
   id: string;
   look_id: string;
@@ -96,14 +93,12 @@ export interface LookCredit {
   role: string;
   notes: string | null;
 }
-
 export interface LookBrandCredit {
   id: string;
   look_id: string;
   brand_id: string;
   role: string;
 }
-
 export interface Location {
   id: string;
   name: string;
