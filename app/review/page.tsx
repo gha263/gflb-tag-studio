@@ -11,6 +11,21 @@ function slugify(str: string) {
   return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+// Deterministic ordering for brand/person credits after the credit_order
+// column was dropped (Aug 2026, flip_designer_attribution migration).
+// Primary key is created_at (INSERT order); brand_id / person_id breaks
+// ties for rows inserted in the same batch (which share a timestamp). This
+// gives the same row-by-row output every render, so the "primary brand"
+// derived from credits[0] is stable.
+function cmpByCreatedAtThen(idKey: "brand_id" | "person_id") {
+  return (a: any, b: any) => {
+    const aC = a?.created_at || "";
+    const bC = b?.created_at || "";
+    if (aC !== bC) return aC.localeCompare(bC);
+    return (a?.[idKey] || "").localeCompare(b?.[idKey] || "");
+  };
+}
+
 // ── Labelled Typeahead ────────────────────────────────────────────────────────
 
 function Typeahead({ items, value, onChange, onClear, placeholder, onCreateClick, width }: any) {
@@ -169,13 +184,13 @@ function CreateBrandModal({ initialName, locations, people, onSave, onPersonCrea
       if (!brandRes.ok) throw new Error(await brandRes.text());
       const [createdBrand] = await brandRes.json();
 
-      // 2. Handle brand designer (brand-associated person is always "designer")
+      // 2. Handle creative director
       let cdPersonId = cdPerson?.isNew ? null : cdPerson?.id;
       if (cdPerson?.isNew && cdPerson.name) {
         const personRes = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
           method: "POST",
           headers: { ...H, Prefer: "return=representation" },
-          body: JSON.stringify({ name: cdPerson.name.trim(), slug: slugify(cdPerson.name), primary_role: "designer" }),
+          body: JSON.stringify({ name: cdPerson.name.trim(), slug: slugify(cdPerson.name), primary_role: "creative_director" }),
         });
         if (!personRes.ok) throw new Error(await personRes.text());
         const [createdPerson] = await personRes.json();
@@ -456,10 +471,13 @@ export default function ReviewQueue() {
   const loadLooks = async () => {
     setLoading(true); setSelected(null); setLoadError(null);
     try {
-      const data = await sbAll(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc,id.desc`);
+      // credit_order was dropped from look_brand_credits by the Aug 2026
+      // flip_designer_attribution migration — pull created_at instead so
+      // the brands_display column below can order names deterministically.
+      const data = await sb(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,created_at,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc&limit=1000`);
 
       setLooks(data.map((l: any) => {
-        const rows = l.look_brand_credits || [];
+        const rows = (l.look_brand_credits || []).slice().sort(cmpByCreatedAtThen("brand_id"));
         const names = rows.map((r: any) => r.brands?.name).filter(Boolean);
         return {
           ...l,
@@ -474,9 +492,12 @@ export default function ReviewQueue() {
   };
 
   const loadDetail = async (lookId: string) => {
+    // Order the detail-panel rows by insertion time (created_at) — same
+    // reasoning as loadLooks. Selecting created_at is also needed to keep
+    // brand names in the same order the list view shows them.
     const [bRows, credits] = await Promise.all([
-      sb(`look_brand_credits?look_id=eq.${lookId}&select=id,brand_id,role,is_courtesy,brands(id,name)`),
-      sb(`look_credits?look_id=eq.${lookId}&select=id,role,person_id,ingest_handle,people(id,name,primary_role)`),
+      sb(`look_brand_credits?look_id=eq.${lookId}&select=id,brand_id,role,created_at,is_courtesy,brands(id,name)&order=created_at`),
+      sb(`look_credits?look_id=eq.${lookId}&select=id,role,person_id,created_at,ingest_handle,people(id,name,primary_role)&order=created_at`),
     ]);
     // Snapshot of what's actually in the DB right now, captured once at load
     // time and never mutated by editing — this is what saveEdits diffs
@@ -717,7 +738,7 @@ export default function ReviewQueue() {
       // originalCredits), which never mutates as the form is edited:
       //   - a desired tuple with no existing match  → INSERT
       //   - an existing tuple with no desired match → DELETE (by its dbId)
-      //   - a tuple present in both                 → PATCH courtesy only (brands)
+      //   - a tuple present in both (brands only)   → PATCH is_courtesy
       // Unchanged rows are never re-inserted, so re-saving without touching
       // credits can't collide with the row that's already sitting there —
       // the bug that produced the "duplicate key value" error.
@@ -725,9 +746,12 @@ export default function ReviewQueue() {
       const cKey = (personId: string, role: string) => `${personId}::${role}`;
 
       // ---- Brand credits ----
+      // credit_order was dropped in the Aug 2026 flip_designer_attribution
+      // migration — new rows go in without it, and the PATCH only carries
+      // is_courtesy since that's the last remaining mutable column here.
       const existingBrandByKey = new Map(originalBrandCredits.map(r => [bKey(r.brandId, r.role), r.dbId]));
       const desiredBrandByKey = new Map<string, { brandId: string; role: null; isCourtesy: boolean }>();
-      validBrandRows.forEach((b) => {
+      validBrandRows.forEach(b => {
         desiredBrandByKey.set(bKey(b.brand.id, null), { brandId: b.brand.id, role: null, isCourtesy: b.isCourtesy });
       });
 
@@ -748,10 +772,17 @@ export default function ReviewQueue() {
       }
 
       // ---- Person credits ----
+      // Same story as brand credits: credit_order gone. And look_credits
+      // has no other mutable column being tracked from the editor, so a
+      // (person_id, role) tuple that already exists in the DB has nothing
+      // to PATCH — INSERT and DELETE paths are the only work needed.
+      // Row identity changes (e.g. swapping a person on an existing row)
+      // naturally surface as a matched INSERT-plus-DELETE pair because
+      // the tuple key differs.
       const existingCreditByKey = new Map(originalCredits.map(r => [cKey(r.personId, r.role), r.dbId]));
       const desiredCreditByKey = new Map<string, { personId: string; role: string }>();
       const validContributors = contributors.filter(c => c.person?.id && c.role);
-      validContributors.forEach((c) => {
+      validContributors.forEach(c => {
         desiredCreditByKey.set(cKey(c.person.id, c.role.name), { personId: c.person.id, role: c.role.name });
       });
       // Two contributor rows resolving to the same (person, role) collapse
