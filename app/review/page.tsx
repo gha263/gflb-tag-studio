@@ -28,7 +28,7 @@ function cmpByCreatedAtThen(idKey: "brand_id" | "person_id") {
 
 // ── Labelled Typeahead ────────────────────────────────────────────────────────
 
-function Typeahead({ items, value, onChange, onClear, placeholder, onCreateClick, width }: any) {
+function Typeahead({ items, value, onChange, onClear, placeholder, onCreateClick, onRename, width }: any) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -47,9 +47,26 @@ function Typeahead({ items, value, onChange, onClear, placeholder, onCreateClick
     ? { position: "relative" as const, width, flexShrink: 0 }
     : { position: "relative" as const, flex: 1 };
 
+  // When onRename is passed, the chip carries a pencil affordance next to the ×.
+  // Used by contributor rows so a handle-shaped placeholder person (e.g.
+  // `ivandarioramirez89` captured by the Chrome extension) can be renamed to
+  // the real display name in place — without clearing the chip and typing
+  // fresh, which would create a new orphaned people row rather than editing
+  // the existing one. onRename receives the current value; the parent owns
+  // the modal state.
   if (value) return (
     <div style={{ ...wrapStyle, display: "flex", alignItems: "center", gap: 6, background: C.lift3, borderRadius: 10, padding: "8px 12px" }}>
       <span style={{ flex: 1, fontSize: 13, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value.name}</span>
+      {onRename && (
+        <button
+          tabIndex={-1}
+          onClick={(e) => { e.stopPropagation(); onRename(value); }}
+          title="Rename this person"
+          style={{ background: "none", border: "none", color: C.muted, fontSize: 13, cursor: "pointer", padding: "0 2px", lineHeight: 1, opacity: 0.7 }}
+          onMouseEnter={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = C.text; }}
+          onMouseLeave={e => { e.currentTarget.style.opacity = "0.7"; e.currentTarget.style.color = C.muted; }}
+        >✎</button>
+      )}
       <button tabIndex={-1} onClick={onClear} style={{ background: "none", border: "none", color: C.muted, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
     </div>
   );
@@ -317,6 +334,233 @@ function CreatePublicationModal({ initialName, onSave, onClose }: any) {
   );
 }
 
+// ── Rename / Merge modal ──────────────────────────────────────────────────────
+// Opens from the pencil icon on a Person Typeahead chip. Two views:
+//
+//   1. RENAME (default)  — name input + auto-computed slug preview → PATCH people.
+//      If Postgres rejects on slug uniqueness (23505), we treat that as "the
+//      real record already exists" and morph into the merge view.
+//
+//   2. MERGE CONFIRM     — shows credit counts on both records and confirms
+//      → calls the merge_people(source, target) RPC atomically. RPC handles
+//      collision inside look_credits (drops source rows that would collide
+//      with an existing target row on look_id+role) and returns a summary.
+//
+// The parent (ReviewQueue) owns after-effects:
+//   - onRenamed(updated)  → patch `people` list + swap in-place on any
+//     contributor row currently referencing this id
+//   - onMerged({source, target, ...counts}) → drop source from `people`,
+//     ensure target is in list, then loadDetail() to refresh the snapshot
+//     that saveEdits diffs against (stale snapshot after a merge would
+//     produce wrong deletes on next save)
+
+function RenamePersonModal({ person, onClose, onRenamed, onMerged }: {
+  person: any;
+  onClose: () => void;
+  onRenamed: (updated: { id: string; name: string; slug: string }) => void;
+  onMerged: (result: { source: any; target: any; credits_moved: number; credits_dropped: number; directors_moved: number; directors_dropped: number; education_moved: number; prior_role_moved: number }) => void;
+}) {
+  const [name, setName] = useState(person.name || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [collision, setCollision] = useState<{
+    target: { id: string; name: string; slug: string };
+    sourceCredits: number;
+    targetCredits: number;
+  } | null>(null);
+
+  const newSlug = slugify(name);
+  const noChange = name.trim() === (person.name || "") && newSlug === (person.slug || "");
+  const canRename = !!name.trim() && !noChange && !saving;
+
+  async function handleRename() {
+    if (!canRename) return;
+    setSaving(true); setError(null);
+    try {
+      await sb(`people?id=eq.${person.id}`, {
+        method: "PATCH", prefer: "",
+        body: JSON.stringify({ name: name.trim(), slug: newSlug }),
+      });
+      onRenamed({ id: person.id, name: name.trim(), slug: newSlug });
+      onClose();
+    } catch (e: any) {
+      const msg = e?.message || "";
+      // Postgres 23505 = unique_violation on slug — a person with this
+      // display name already exists. Look up the target so the user can
+      // confirm the merge instead of forcing a manual reconciliation.
+      const isDup = msg.includes("23505") || /duplicate key/i.test(msg);
+      if (isDup) {
+        try {
+          const rows = await sb(`people?slug=eq.${newSlug}&select=id,name,slug`);
+          if (Array.isArray(rows) && rows.length > 0) {
+            const target = rows[0];
+            if (target.id === person.id) {
+              // Shouldn't happen (same-slug PATCH would no-op), but guard anyway
+              setError("Slug matches the same record — try a different name.");
+            } else {
+              // Fetch credit counts so the confirm shows what's actually moving
+              const [sc, tc] = await Promise.all([
+                sb(`look_credits?person_id=eq.${person.id}&select=id`),
+                sb(`look_credits?person_id=eq.${target.id}&select=id`),
+              ]);
+              setCollision({
+                target,
+                sourceCredits: Array.isArray(sc) ? sc.length : 0,
+                targetCredits: Array.isArray(tc) ? tc.length : 0,
+              });
+            }
+          } else {
+            setError("Name conflict, but the matching record couldn't be found. Reload and try again.");
+          }
+        } catch (lookupErr: any) {
+          setError(`Name conflict, and lookup of the existing record failed: ${lookupErr?.message || "unknown"}`);
+        }
+      } else {
+        setError(msg || "Rename failed");
+      }
+    }
+    setSaving(false);
+  }
+
+  async function handleMerge() {
+    if (!collision) return;
+    setSaving(true); setError(null);
+    try {
+      // PostgREST /rpc/ endpoint returns the function's jsonb return value
+      // directly as the response body. sb() parses it.
+      const result = await sb("rpc/merge_people", {
+        method: "POST", prefer: "",
+        body: JSON.stringify({ source_id: person.id, target_id: collision.target.id }),
+      });
+      onMerged({
+        source: person,
+        target: collision.target,
+        credits_moved:     result?.credits_moved     ?? 0,
+        credits_dropped:   result?.credits_dropped   ?? 0,
+        directors_moved:   result?.directors_moved   ?? 0,
+        directors_dropped: result?.directors_dropped ?? 0,
+        education_moved:   result?.education_moved   ?? 0,
+        prior_role_moved:  result?.prior_role_moved  ?? 0,
+      });
+      onClose();
+    } catch (e: any) {
+      setError(e?.message || "Merge failed");
+    }
+    setSaving(false);
+  }
+
+  const inp2 = { background: C.lift3, border: "none" as const, color: "#ececec", padding: "9px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
+  const lbl = { fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase" as const, letterSpacing: "0.07em" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={() => { if (!saving) onClose(); }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: C.lift1, borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.lift2}` }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#ececec" }}>
+            {collision ? "Merge into existing record?" : "Rename person"}
+          </span>
+          <button tabIndex={-1} onClick={onClose} disabled={saving}
+            style={{ background: "none", border: "none", color: C.muted, fontSize: 22, cursor: saving ? "default" : "pointer", padding: 0, opacity: saving ? 0.4 : 1 }}>×</button>
+        </div>
+
+        {!collision ? (
+          // ── Rename view ────────────────────────────────────────────────────
+          <>
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <label style={lbl}>Current</label>
+                <div style={{ fontSize: 13, color: C.muted, background: C.lift2, padding: "8px 12px", borderRadius: 10, lineHeight: 1.4 }}>
+                  {person.name}
+                  <span style={{ marginLeft: 8, fontSize: 11, color: C.dim, fontFamily: "monospace" }}>/{person.slug}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <label style={lbl}>New name</label>
+                <input value={name} onChange={e => setName(e.target.value)} autoFocus
+                  onKeyDown={e => { if (e.key === "Enter" && canRename) handleRename(); }}
+                  placeholder="e.g. Jose Luis Santa"
+                  style={inp2} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <label style={lbl}>Slug (auto)</label>
+                <div style={{ fontSize: 12, color: C.dim, fontFamily: "monospace", background: C.lift2, padding: "8px 12px", borderRadius: 10 }}>
+                  /{newSlug || "—"}
+                </div>
+              </div>
+              {error && (
+                <div style={{ fontSize: 12, color: C.red, background: "rgba(224,90,78,0.1)", border: `1px solid ${C.red}`, borderRadius: 8, padding: "8px 12px" }}>
+                  {error}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button tabIndex={-1} onClick={onClose} disabled={saving}
+                style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: saving ? "default" : "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif", opacity: saving ? 0.5 : 1 }}>
+                Cancel
+              </button>
+              <button onClick={handleRename} disabled={!canRename}
+                style={{ background: "#ececec", border: "none", color: "#212121", padding: "8px 20px", fontSize: 13, cursor: canRename ? "pointer" : "default", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: canRename ? 1 : 0.4 }}>
+                {saving ? "Saving…" : "Rename"}
+              </button>
+            </div>
+          </>
+        ) : (
+          // ── Merge confirm view ─────────────────────────────────────────────
+          <>
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
+                A person named <strong style={{ color: C.white }}>{collision.target.name}</strong> already exists.
+                Instead of creating another record, fold this one into the existing one:
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "center" }}>
+                <div style={{ background: C.lift2, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 3 }}>{person.name}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{collision.sourceCredits}</div>
+                  <div style={{ fontSize: 10, color: C.dim, textTransform: "uppercase", letterSpacing: "0.05em" }}>credits</div>
+                </div>
+                <div style={{ fontSize: 18, color: C.muted }}>→</div>
+                <div style={{ background: C.lift2, borderRadius: 10, padding: "10px 12px", textAlign: "center", border: `1px solid ${C.green}` }}>
+                  <div style={{ fontSize: 12, color: C.green, marginBottom: 3 }}>{collision.target.name}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{collision.sourceCredits + collision.targetCredits}</div>
+                  <div style={{ fontSize: 10, color: C.dim, textTransform: "uppercase", letterSpacing: "0.05em" }}>credits</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+                All references to <span style={{ color: C.text }}>{person.name}</span> (credits, brand-director rows, education, prior-role) will move to <span style={{ color: C.text }}>{collision.target.name}</span>, then the placeholder record will be deleted.
+                Any credit that already exists on the target for the same look + role will be dropped (target keeps its own).
+                <span style={{ color: C.red, fontWeight: 500 }}> This can't be undone.</span>
+              </div>
+              {error && (
+                <div style={{ fontSize: 12, color: C.red, background: "rgba(224,90,78,0.1)", border: `1px solid ${C.red}`, borderRadius: 8, padding: "8px 12px" }}>
+                  {error}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.lift2}`, display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <button tabIndex={-1} onClick={() => setCollision(null)} disabled={saving}
+                style={{ background: "none", border: "none", color: C.muted, padding: "8px 4px", fontSize: 12, cursor: saving ? "default" : "pointer", fontFamily: "Inter,sans-serif" }}>
+                ← Back to rename
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button tabIndex={-1} onClick={onClose} disabled={saving}
+                  style={{ background: C.lift2, border: "none", color: C.muted, padding: "8px 18px", fontSize: 13, cursor: saving ? "default" : "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif", opacity: saving ? 0.5 : 1 }}>
+                  Cancel
+                </button>
+                <button onClick={handleMerge} disabled={saving} autoFocus
+                  style={{ background: C.red, border: "none", color: "#fff", padding: "8px 20px", fontSize: 13, cursor: saving ? "default" : "pointer", borderRadius: 20, fontWeight: 600, fontFamily: "Inter,sans-serif", opacity: saving ? 0.5 : 1 }}>
+                  {saving ? "Merging…" : "Yes, merge"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function F({ label, children, span2 = false }: any) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: span2 ? "1 / -1" : undefined }}>
@@ -420,6 +664,14 @@ export default function ReviewQueue() {
   const [personModal, setPersonModal] = useState<{name: string; role: string; target: string} | null>(null);
   const [brandModal, setBrandModal] = useState<{name: string; target: string} | null>(null);
   const [publicationModal, setPublicationModal] = useState<string | null>(null);
+  // Rename-affordance modal for handle-shaped placeholder people. The Chrome
+  // extension captures IG posts as-is, so `name` and `slug` come in as the
+  // account handle (e.g. `ivandarioramirez89`) rather than the display name
+  // (Ivan Dario Ramirez). Users used to have to clear the chip + retype,
+  // which created a brand-new person row and orphaned the placeholder. This
+  // modal PATCHes the existing row in place, or offers merge-into-existing
+  // if the display name matches an already-real person.
+  const [renamePerson, setRenamePerson] = useState<any | null>(null);
 
   const [checkedContributors, setCheckedContributors] = useState<Set<string>>(new Set());
   const [clipboardFlash, setClipboardFlash] = useState(false);
@@ -679,6 +931,74 @@ export default function ReviewQueue() {
       return null;
     }
   }
+
+  // Rename succeeded — patch the person in-place across `people` and any
+  // contributor row that already references it. No DB round-trip needed;
+  // the row's id hasn't changed, only its display fields.
+  const handleRenamed = (updated: { id: string; name: string; slug: string }) => {
+    setPeople(prev =>
+      prev.map(p => p.id === updated.id ? { ...p, name: updated.name, slug: updated.slug } : p)
+          .sort((a: any, b: any) => a.name.localeCompare(b.name))
+    );
+    setContributors(prev => prev.map(c =>
+      c.person?.id === updated.id
+        ? { ...c, person: { ...c.person, name: updated.name, slug: updated.slug } }
+        : c
+    ));
+  };
+
+  // Merge succeeded — DB now points every reference from source→target and
+  // the source row is gone. Reflect that in local state, then reload the
+  // detail panel: the originalCredits/originalBrandCredits snapshot that
+  // saveEdits diffs against is otherwise stale for this look (still keyed
+  // on the deleted source id), which would produce spurious DELETEs on the
+  // next Save.
+  const handleMerged = async (result: {
+    source: any;
+    target: any;
+    credits_moved: number;
+    credits_dropped: number;
+    directors_moved: number;
+    directors_dropped: number;
+    education_moved: number;
+    prior_role_moved: number;
+  }) => {
+    // Ensure the target is present in the people list with its full record.
+    // In the common case (Chrome-extension placeholder folding into an
+    // already-loaded named person) the target is already there; we still
+    // refetch defensively so `primary_role` and any other columns render
+    // right in future typeahead rows.
+    let targetFull = people.find(p => p.id === result.target.id);
+    try {
+      const rows = await sb(`people?id=eq.${result.target.id}&select=id,name,slug,primary_role`);
+      if (Array.isArray(rows) && rows.length > 0) targetFull = rows[0];
+    } catch { /* fall back to whatever we already have */ }
+
+    setPeople(prev => {
+      const withoutSource = prev.filter(p => p.id !== result.source.id);
+      if (targetFull && !withoutSource.find(p => p.id === targetFull!.id)) {
+        return [...withoutSource, targetFull].sort((a: any, b: any) => a.name.localeCompare(b.name));
+      }
+      return withoutSource;
+    });
+
+    // Refresh the snapshot for the currently-open look so a subsequent Save
+    // diffs against actual DB state rather than the pre-merge state.
+    if (selected) await loadDetail(selected.id);
+
+    // Refresh the list view so credit_count on this look and any other
+    // affected looks matches DB reality after any collision-drops.
+    await loadLooks();
+
+    // Non-blocking summary: tells the user what actually moved, especially
+    // useful when the RPC dropped some rows to resolve unique conflicts.
+    const parts = [
+      result.credits_moved > 0 ? `${result.credits_moved} credit${result.credits_moved === 1 ? "" : "s"} moved` : null,
+      result.credits_dropped > 0 ? `${result.credits_dropped} dropped (target already had them)` : null,
+      result.directors_moved > 0 ? `${result.directors_moved} brand-director row${result.directors_moved === 1 ? "" : "s"} moved` : null,
+    ].filter(Boolean);
+    console.info(`[review] Merged ${result.source.name} → ${result.target.name}: ${parts.join(", ") || "no references to move"}`);
+  };
 
   const saveEdits = async () => {
     if (!selected) return;
@@ -1102,7 +1422,7 @@ export default function ReviewQueue() {
                         <div key={c.key} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <input type="checkbox" checked={checkedContributors.has(c.key)} onChange={() => toggleContributorCheck(c.key)}
                             style={{ accentColor: C.white, width: 14, height: 14, cursor: "pointer", flexShrink: 0 }} />
-                          <Typeahead items={people} value={c.person} onChange={(p: any) => updateContributorPerson(c.key, p)} onClear={() => updateContributorPerson(c.key, null)} placeholder="Search or create person..." onCreateClick={(name: string) => setPersonModal({ name, role: c.role?.slug ? c.role.slug.replace(/-/g, "_") : null, target: `contributor:${c.key}` })} />
+                          <Typeahead items={people} value={c.person} onChange={(p: any) => updateContributorPerson(c.key, p)} onClear={() => updateContributorPerson(c.key, null)} onRename={(person: any) => setRenamePerson(person)} placeholder="Search or create person..." onCreateClick={(name: string) => setPersonModal({ name, role: c.role?.slug ? c.role.slug.replace(/-/g, "_") : null, target: `contributor:${c.key}` })} />
                           {/* ingest_handle provenance tag */}
                           {c.ingest_handle && (
                             <span style={{ fontSize: 11, color: C.muted, background: C.lift2, padding: "3px 8px", borderRadius: 10, whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -1291,6 +1611,15 @@ export default function ReviewQueue() {
             setEditPublication(created);
             setPublicationModal(null);
           }}
+        />
+      )}
+
+      {renamePerson && (
+        <RenamePersonModal
+          person={renamePerson}
+          onClose={() => setRenamePerson(null)}
+          onRenamed={handleRenamed}
+          onMerged={handleMerged}
         />
       )}
 
