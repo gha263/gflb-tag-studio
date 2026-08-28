@@ -2,9 +2,20 @@
 // lib/supabase.ts
 // Single source of truth for Supabase REST access across Look 47 Studio.
 // All tabs (Tag Studio, Intake, Review, Frames) import sb / sbAll from here.
+//
+// Traffic path: every request now goes through the Next.js server-side
+// proxy at /api/db-proxy, which forwards to the archive Supabase project
+// with the service_role key (held in Vercel env only, never in the
+// browser bundle). The `apikey` and `Authorization` headers we send from
+// the browser are stripped at the proxy and replaced with the service
+// key — so the SUPABASE_KEY constant below is effectively vestigial, but
+// kept for header consistency in case anything else relies on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const SUPABASE_URL = "https://rsslbgfbdoqxgogbuuzc.supabase.co";
+// Relative URL — resolves against current origin at request time, so it
+// works in dev (localhost:3000), preview deploys, and production
+// (gflb-tag-studio.vercel.app) without per-environment configuration.
+export const SUPABASE_URL = "/api/db-proxy";
 export const SUPABASE_KEY =
   "sb_publishable_Za4xbjnaWzvebzzuZMDPPA_MuSaDXRe";
 
