@@ -9,15 +9,13 @@
 // auth headers.
 //
 // Two layers of protection sit in front of this route:
-//   1. proxy.ts (Basic Auth) at the repo root — every request must first
-//      pass Tag Studio's auth wall, so only authenticated admins can
-//      reach this route.
+//   1. proxy.ts (Basic Auth + signed cookie) at the repo root — every
+//      request must first pass Tag Studio's auth wall.
 //   2. Server-side env var — the service_role key lives only in Vercel
 //      env, never in the browser bundle.
 //
 // Fail-safe: if ARCHIVE_SERVICE_KEY is unset, every request 500s rather
-// than passing through unauthenticated. A misconfigured env must never
-// mean an unguarded door.
+// than passing through unauthenticated.
 //
 // Runs on the Node.js runtime (Next.js 16 default for route handlers).
 
@@ -26,11 +24,16 @@ import type { NextRequest } from 'next/server';
 
 const ARCHIVE_URL = 'https://rsslbgfbdoqxgogbuuzc.supabase.co';
 
-// Headers passed through from the browser to PostgREST. Deliberately
-// EXCLUDES `apikey` and `authorization` — an attacker could try sending
-// their own service_role key, and we always want the server-controlled
-// one to win. Everything else PostgREST relies on (Content-Type, Prefer,
-// Range for pagination, Accept, conditional headers) is forwarded verbatim.
+// Response statuses that MUST NOT carry a body per the Fetch spec. If we
+// try to pass a body (even an empty string) with these statuses, the
+// NextResponse / Web Response constructor throws
+// "Invalid response status code". PostgREST commonly returns 204 for
+// successful PATCH/DELETE when the caller sends `Prefer: return=minimal`.
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
+// Request headers to forward from browser to PostgREST. Deliberately
+// EXCLUDES `apikey` and `authorization` — always replaced with the
+// server-controlled service key.
 const FORWARD_REQ_HEADERS = [
   'content-type',
   'prefer',
@@ -43,9 +46,8 @@ const FORWARD_REQ_HEADERS = [
   'if-none-match',
 ];
 
-// Response headers worth passing back to the browser so the Supabase
-// client sees paginated results correctly (Content-Range), gets the
-// Location URL on inserts, etc.
+// Response headers worth surfacing back to the browser so the client sees
+// pagination (Content-Range), inserted row locations, etc.
 const FORWARD_RES_HEADERS = [
   'content-type',
   'content-range',
@@ -93,6 +95,19 @@ async function proxyRequest(
   for (const name of FORWARD_RES_HEADERS) {
     const value = upstream.headers.get(name);
     if (value) responseHeaders[name] = value;
+  }
+
+  // Null-body statuses (204 / 205 / 304 / 101) can't have a body per the
+  // Fetch spec — passing even "" throws "Invalid response status code" in
+  // the Response constructor. Read and discard the upstream body, then
+  // construct with `null`. All other statuses get the full body text.
+  if (NULL_BODY_STATUSES.has(upstream.status)) {
+    // Drain the upstream body so the connection can be released; ignore result.
+    await upstream.text().catch(() => undefined);
+    return new NextResponse(null, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
   }
 
   const responseText = await upstream.text();
