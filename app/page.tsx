@@ -125,13 +125,13 @@ export default function TagStudio() {
       return;
     }
     setTagFilterLoading(true);
-    // Color tag + primaryOnly: query looks.primary_color_tag_id directly (Living
+    // Color tag + primaryOnly: query looks.grid_bucket_tag_id directly (Living
     // Grid semantics — only starred primaries, matches what would render in the
     // Grid bucket). Anything else falls back to the broad entity_tags filter.
     const isColor = (tagsByType["color"] || []).some((t: any) => t.id === tagId);
     let ids: Set<string>;
     if (isColor && primaryOnly) {
-      const rows = await sb(`looks?primary_color_tag_id=eq.${tagId}&select=id`);
+      const rows = await sb(`looks?grid_bucket_tag_id=eq.${tagId}&select=id`);
       ids = new Set<string>((rows || []).map((r: any) => r.id));
     } else {
       ids = lookIdCache[tagId] ?? await fetchLookIdsForTag(tagId);
@@ -156,7 +156,7 @@ export default function TagStudio() {
       try {
         let ids: Set<string>;
         if (primaryOnly) {
-          const rows = await sb(`looks?primary_color_tag_id=eq.${tagFilterId}&select=id`);
+          const rows = await sb(`looks?grid_bucket_tag_id=eq.${tagFilterId}&select=id`);
           ids = new Set<string>((rows || []).map((r: any) => r.id));
         } else {
           ids = lookIdCache[tagFilterId] ?? await fetchLookIdsForTag(tagFilterId);
@@ -315,11 +315,11 @@ export default function TagStudio() {
   };
 
   const loadTags = async (lookId: string) => {
-    // Primary color lives on looks.primary_color_tag_id (scalar column) now.
+    // Primary color lives on looks.grid_bucket_tag_id (scalar column) now.
     // Entity_tags is only queried for active/human/AI membership.
     const [data, lookRows] = await Promise.all([
       sb(`entity_tags?entity_id=eq.${lookId}&entity_type=eq.look&select=tag_id,source,status`),
-      sb(`looks?id=eq.${lookId}&select=primary_color_tag_id`),
+      sb(`looks?id=eq.${lookId}&select=grid_bucket_tag_id`),
     ]);
     const human = new Set<string>(
       data.filter((t: any) => t.source === "human").map((t: any) => t.tag_id)
@@ -330,7 +330,7 @@ export default function TagStudio() {
     setHumanTagIds(human);
     setAiApprovedTagIds(aiApproved);
     setActiveTags(new Set<string>([...human, ...aiApproved]));
-    setPrimaryTagId(lookRows?.[0]?.primary_color_tag_id ?? null);
+    setPrimaryTagId(lookRows?.[0]?.grid_bucket_tag_id ?? null);
   };
 
   const toggleTag = async (tagId: string) => {
@@ -351,10 +351,10 @@ export default function TagStudio() {
         newHuman.delete(tagId);
         setHumanTagIds(newHuman);
         if (primaryTagId === tagId) {
-          // If this was the primary color, clear looks.primary_color_tag_id too
+          // If this was the primary color, clear looks.grid_bucket_tag_id too
           await sb(`looks?id=eq.${look.id}`, {
             method: "PATCH", prefer: "",
-            body: JSON.stringify({ primary_color_tag_id: null }),
+            body: JSON.stringify({ grid_bucket_tag_id: null }),
           });
           setPrimaryTagId(null);
         }
@@ -458,10 +458,10 @@ export default function TagStudio() {
         }
       }
       if (primaryTagId === tagId) {
-        // If the rejected color was primary, clear looks.primary_color_tag_id too
+        // If the rejected color was primary, clear looks.grid_bucket_tag_id too
         await sb(`looks?id=eq.${look.id}`, {
           method: "PATCH", prefer: "",
-          body: JSON.stringify({ primary_color_tag_id: null }),
+          body: JSON.stringify({ grid_bucket_tag_id: null }),
         });
         setPrimaryTagId(null);
       }
@@ -475,13 +475,13 @@ export default function TagStudio() {
     setSaving(true);
     try {
       // Toggle: click starred = clear, click unstarred = set.
-      // primary_color_tag_id is a scalar column on `looks` — the single source
+      // grid_bucket_tag_id is a scalar column on `looks` — the single source
       // of truth for a look's primary color. Legacy entity_tags is_primary /
       // is_primary_confirmed flags are no longer written or read.
       const newPrimary = primaryTagId === tagId ? null : tagId;
       await sb(`looks?id=eq.${look.id}`, {
         method: "PATCH", prefer: "",
-        body: JSON.stringify({ primary_color_tag_id: newPrimary }),
+        body: JSON.stringify({ grid_bucket_tag_id: newPrimary }),
       });
       setPrimaryTagId(newPrimary);
       // If the current tag filter is this color tag AND primaryOnly is on, keep
