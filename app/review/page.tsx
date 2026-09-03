@@ -1007,6 +1007,15 @@ export default function ReviewQueue() {
     try {
       const validBrandRows = brandRows.filter(b => b.brand?.id);
 
+      // Editorial rule: a non-collaboration look has exactly one brand credit.
+      // If "This is a collaboration" is unchecked, only the first (earliest)
+      // brand row survives. Extras drop out here — they're not added to
+      // desiredBrandByKey below, so the diff naturally puts them into
+      // brandDbIdsToDelete for deletion. The user is warned inline next to
+      // the collab checkbox that this will happen. Courtesy flag is a
+      // separate concept and is respected on whichever row survives.
+      const effectiveBrandRows = editIsCollab ? validBrandRows : validBrandRows.slice(0, 1);
+
       // Belt-and-suspenders: guard against any fabricated local-* or adhoc-*
       // ids that might survive from a prior code path or a stale session
       // (e.g. state hanging around from before the create* helpers were
@@ -1076,7 +1085,7 @@ export default function ReviewQueue() {
       // is_courtesy since that's the last remaining mutable column here.
       const existingBrandByKey = new Map(originalBrandCredits.map(r => [bKey(r.brandId, r.role), r.dbId]));
       const desiredBrandByKey = new Map<string, { brandId: string; role: null; isCourtesy: boolean }>();
-      validBrandRows.forEach(b => {
+      effectiveBrandRows.forEach(b => {
         desiredBrandByKey.set(bKey(b.brand.id, null), { brandId: b.brand.id, role: null, isCourtesy: b.isCourtesy });
       });
 
@@ -1380,15 +1389,23 @@ export default function ReviewQueue() {
                           <button tabIndex={-1} onClick={() => removeBrandRow(b.key)} style={{ background: "none", border: "none", color: C.muted, fontSize: 20, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
                         </div>
                       ))}
-                      <button onClick={addBrandRow} style={{ alignSelf: "flex-start", background: "transparent", border: `1.5px dashed ${C.lift3}`, color: C.muted, padding: "7px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add brand</button>
+                      {editIsCollab && (
+                        <button onClick={addBrandRow} style={{ alignSelf: "flex-start", background: "transparent", border: `1.5px dashed ${C.lift3}`, color: C.muted, padding: "7px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add brand</button>
+                      )}
                     </div>
                   </F>
 
                   <F label="" span2>
-                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: C.text, userSelect: "none" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: C.text, userSelect: "none", flexWrap: "wrap" }}>
                       <input type="checkbox" checked={editIsCollab} onChange={e => setEditIsCollab(e.target.checked)} style={{ accentColor: C.white, cursor: "pointer" }} />
                       This is a collaboration
                       <span style={{ fontSize: 11, color: C.dim, fontStyle: "italic", marginLeft: 4 }}>— official co-creation between the brands above</span>
+                      {!editIsCollab && brandRows.filter(b => b.brand?.id).length > 1 && (
+                        <span style={{ fontSize: 11, color: C.amber, marginLeft: 4, fontStyle: "italic", width: "100%" }}>
+                          {"⚠ Not a collaboration — extras will be removed on save: "}
+                          {brandRows.filter(b => b.brand?.id).slice(1).map(b => b.brand.name).join(", ")}
+                        </span>
+                      )}
                     </label>
                   </F>
 
