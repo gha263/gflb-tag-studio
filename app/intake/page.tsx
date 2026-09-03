@@ -690,6 +690,15 @@ export default function IntakePage() {
     const cleanId = (x: any) => (x?.id && !x.id.startsWith("local-") ? x.id : null);
     const validBrandRows = brandRows.filter(b => cleanId(b.brand));
 
+    // Editorial rule: a non-collaboration look has exactly one brand credit.
+    // Matches the Review page. If the collaboration checkbox is unchecked,
+    // only the first (earliest) brand row survives — the extras are silently
+    // dropped here, because the UI's "+ Add brand" button is hidden unless
+    // isCollab is on, so any extras only exist if the user checked collab,
+    // added brands, then unchecked. That last flip carries an inline warning
+    // in the UI naming which brands will be dropped.
+    const effectiveBrandRows = isCollab ? validBrandRows : validBrandRows.slice(0, 1);
+
     const look = {
       source_url: sourceUrl.trim() || null,
       source_cdn_url: cdnUrl.trim(),
@@ -726,7 +735,7 @@ export default function IntakePage() {
       // look_credits by the Aug 2026 flip_designer_attribution migration —
       // any display ordering now derives from created_at + brand_id at
       // read time. Rows go in without an ordering column; do not re-add.
-      const brandCredits = validBrandRows.map(b => ({
+      const brandCredits = effectiveBrandRows.map(b => ({
         look_id: lookId,
         brand_id: cleanId(b.brand)!,
         role: null,
@@ -876,17 +885,25 @@ export default function IntakePage() {
                     <button tabIndex={-1} onClick={() => removeBrandRow(b.key)} style={s.rowX}>×</button>
                   </div>
                 ))}
-                <button onClick={addBrandRow} style={s.addRow}>+ Add brand</button>
+                {isCollab && (
+                  <button onClick={addBrandRow} style={s.addRow}>+ Add brand</button>
+                )}
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <label style={s.ckLabel}>
                 <input type="checkbox" checked={isCollab} style={s.ck}
                   onChange={e => setIsCollab(e.target.checked)} />
                 This is a collaboration
               </label>
               <span style={{ fontSize: 12, color: C.dim, fontStyle: "italic" }}>official co-creation between the brands above</span>
+              {!isCollab && brandRows.filter(b => b.brand?.id).length > 1 && (
+                <span style={{ fontSize: 11, color: C.amber, fontStyle: "italic", width: "100%" }}>
+                  {"⚠ Not a collaboration — extras will be dropped on submit: "}
+                  {brandRows.filter(b => b.brand?.id).slice(1).map(b => b.brand.name).join(", ")}
+                </span>
+              )}
             </div>
 
             <div style={s.field}>
