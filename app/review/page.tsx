@@ -620,6 +620,16 @@ export default function ReviewQueue() {
   const [sceneFilter, setSceneFilter] = useState("");
   const [pubFilter, setPubFilter] = useState("");
   const [eventFilter, setEventFilter] = useState("");
+  const [sortMode, setSortMode] = useState<"newest" | "oldest">(() => {
+    if (typeof window !== "undefined") {
+      const v = localStorage.getItem("review_sort");
+      if (v === "oldest" || v === "newest") return v;
+    }
+    return "newest";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("review_sort", sortMode); } catch {}
+  }, [sortMode]);
 
   const [brands, setBrands] = useState<any[]>([]);
   const [people, setPeople] = useState<any[]>([]);
@@ -720,8 +730,15 @@ export default function ReviewQueue() {
     } catch(e) { console.error(e); }
   };
 
-  const loadLooks = async () => {
-    setLoading(true); setSelected(null); setLoadError(null);
+  const loadLooks = async (opts: { background?: boolean } = {}) => {
+    const isBg = opts.background === true;
+    // Background refresh (post-save/status-flip): keep the table mounted so the
+    // scrollable container's scrollHeight doesn't collapse to loading-spinner
+    // height (which forced the browser to clamp scrollTop to 0 → looked like
+    // "list jumped back to top"). Also keep the current selection so the
+    // detail panel doesn't close and re-open.
+    if (!isBg) { setLoading(true); setSelected(null); }
+    setLoadError(null);
     try {
       // sbAll paginates past the PostgREST 1000-row cap — with >1000 total
       // looks across all statuses, using sb() with limit=1000 silently
@@ -733,7 +750,7 @@ export default function ReviewQueue() {
       // the brands_display column below can order names deterministically.
       const data = await sbAll(`looks?select=id,status,cloudinary_url,source_url,source_name,scene,gender,season_display,season_term,season_year,date_published,is_key_look,notes,created_at,is_collaboration,event_id,collection_title,collection_description,publication_id,publication_issue_month,publication_issue_year,tag_count,look_brand_credits(brand_id,created_at,brands(name)),look_credits!look_credits_look_id_fkey(id)&order=created_at.desc`);
 
-      setLooks(data.map((l: any) => {
+      const mapped = data.map((l: any) => {
         const rows = (l.look_brand_credits || []).slice().sort(cmpByCreatedAtThen("brand_id"));
         const names = rows.map((r: any) => r.brands?.name).filter(Boolean);
         return {
@@ -743,9 +760,17 @@ export default function ReviewQueue() {
           credit_count: l.look_credits?.length || 0,
           tag_count: l.tag_count || 0,
         };
-      }));
+      });
+      setLooks(mapped);
+      // Background refresh: keep pointing at the same selected look, but
+      // with the newly-loaded fields (status, brands_display, counts).
+      // If the look was deleted between renders, selection is cleared.
+      if (isBg && selected) {
+        const fresh = mapped.find((l: any) => l.id === selected.id);
+        setSelected(fresh || null);
+      }
     } catch(e: any) { console.error(e); setLoadError(e?.message || "Failed to load looks."); }
-    setLoading(false);
+    if (!isBg) setLoading(false);
   };
 
   const loadDetail = async (lookId: string) => {
@@ -988,7 +1013,7 @@ export default function ReviewQueue() {
 
     // Refresh the list view so credit_count on this look and any other
     // affected looks matches DB reality after any collision-drops.
-    await loadLooks();
+    await loadLooks({ background: true });
 
     // Non-blocking summary: tells the user what actually moved, especially
     // useful when the RPC dropped some rows to resolve unique conflicts.
@@ -1153,7 +1178,7 @@ export default function ReviewQueue() {
       // against the state from before this save.
       await loadDetail(selected.id);
 
-      await loadLooks();
+      await loadLooks({ background: true });
     } catch(e: any) {
       console.error(e);
       setSaveError(e?.message || "Save failed — changes were not persisted.");
@@ -1167,7 +1192,7 @@ export default function ReviewQueue() {
       const body: any = { status };
       if (takedownReason) { body.takedown_reason = takedownReason; body.takedown_at = new Date().toISOString(); }
       await sb(`looks?id=eq.${lookId}`, { method: "PATCH", prefer: "", body: JSON.stringify(body) });
-      await loadLooks();
+      await loadLooks({ background: true });
     } catch(e) { console.error(e); }
     setSaving(false);
   };
@@ -1205,6 +1230,14 @@ export default function ReviewQueue() {
     if (pubFilter && l.publication_id !== pubFilter) return false;
     if (eventFilter && l.event_id !== eventFilter) return false;
     return true;
+  }).sort((a, b) => {
+    // Server ships `looks` in created_at.desc order — sort here anyway so the
+    // toggle works without a re-fetch, and null created_at values sort last
+    // regardless of direction.
+    const aC = a.created_at || "";
+    const bC = b.created_at || "";
+    const cmp = aC.localeCompare(bC);
+    return sortMode === "newest" ? -cmp : cmp;
   });
 
   const hasActiveFilters = search.trim() || sceneFilter || pubFilter || eventFilter;
@@ -1286,6 +1319,11 @@ export default function ReviewQueue() {
             <option value="">Event</option>
             {activeEvents.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
+          <select value={sortMode} onChange={e => setSortMode(e.target.value as "newest" | "oldest")}
+            style={{ background: C.lift2, border: "none", color: C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif" }}>
+            <option value="newest">Sort: Newest first</option>
+            <option value="oldest">Sort: Oldest first</option>
+          </select>
           {hasActiveFilters && (
             <button onClick={clearFilters}
               style={{ background: "none", border: "none", color: C.muted, fontSize: 12, cursor: "pointer", fontFamily: "Inter,sans-serif", padding: "0 4px", whiteSpace: "nowrap" }}>
@@ -1307,7 +1345,7 @@ export default function ReviewQueue() {
                 <div style={{ fontSize: 32 }}>⚠</div>
                 <div style={{ fontWeight: 600 }}>Couldn't load looks</div>
                 <div style={{ fontSize: 12, color: C.muted, maxWidth: 380, fontFamily: "monospace", wordBreak: "break-word" }}>{loadError}</div>
-                <button onClick={loadLooks} style={{ marginTop: 4, background: C.lift2, border: "none", color: C.text, padding: "7px 16px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Retry</button>
+                <button onClick={() => loadLooks()} style={{ marginTop: 4, background: C.lift2, border: "none", color: C.text, padding: "7px 16px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>Retry</button>
               </div>
             ) : filteredLooks.length === 0 ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 8, color: C.muted }}>
