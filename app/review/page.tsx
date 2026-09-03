@@ -1197,17 +1197,6 @@ export default function ReviewQueue() {
     setSaving(false);
   };
 
-  const missingFields = (look: Look) => {
-    const m = [];
-    if (look.brand_count === 0) m.push("brands");
-    if (!look.scene) m.push("scene");
-    if (!look.gender) m.push("gender");
-    if (!look.season_year) m.push("season");
-    if (look.credit_count === 0) m.push("credits");
-    if (look.tag_count === 0) m.push("tags");
-    return m;
-  };
-
   const inp = { background: C.lift3, border: "none" as const, color: C.text, padding: "8px 12px", fontSize: 13, borderRadius: 10, outline: "none", width: "100%", boxSizing: "border-box" as const, fontFamily: "Inter,sans-serif" };
   const sel = { ...inp, cursor: "pointer" as const };
 
@@ -1623,13 +1612,6 @@ export default function ReviewQueue() {
                     <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={2} placeholder="Internal scratchpad..." style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
                   </F>
                 </div>
-
-                {missingFields(selected).length > 0 && (
-                  <div style={{ background: "#2a1f0a", border: "1px solid #5a3a0a", borderRadius: 10, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 12, color: C.amber, fontWeight: 600, marginBottom: 3 }}>Missing fields</div>
-                    <div style={{ fontSize: 12, color: "#c8a060" }}>{missingFields(selected).join(", ")}</div>
-                  </div>
-                )}
 
                 {/* Save — form fields only, status actions are at the top */}
                 <div style={{ paddingBottom: 20, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
