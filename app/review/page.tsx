@@ -1,7 +1,7 @@
 // ── REVIEW PAGE → app/review/page.tsx ────────────────────────────────────────
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { sb, sbAll, H, SUPABASE_URL } from "@/lib/supabase";
 import { C, FONT_IMPORT } from "@/lib/theme";
 
@@ -1210,6 +1210,29 @@ export default function ReviewQueue() {
   const hasActiveFilters = search.trim() || sceneFilter || pubFilter || eventFilter;
   const clearFilters = () => { setSearch(""); setSceneFilter(""); setPubFilter(""); setEventFilter(""); };
 
+  // Prune the Publication and Event dropdowns to entries actually referenced
+  // by at least one loaded look — otherwise the pickers list every row in
+  // publications / events tables, most of which have zero looks and are just
+  // noise. Runs across ALL loaded looks regardless of the current status
+  // filter (draft, published, archived all count), because the user's rule
+  // is "if there's any look for it in the DB, show it."
+  const activePublicationIds = useMemo(
+    () => new Set(looks.map(l => l.publication_id).filter(Boolean) as string[]),
+    [looks],
+  );
+  const activeEventIds = useMemo(
+    () => new Set(looks.map(l => l.event_id).filter(Boolean) as string[]),
+    [looks],
+  );
+  const activePubList = useMemo(
+    () => pubList.filter((p: any) => activePublicationIds.has(p.id)),
+    [pubList, activePublicationIds],
+  );
+  const activeEvents = useMemo(
+    () => events.filter((e: any) => activeEventIds.has(e.id)),
+    [events, activeEventIds],
+  );
+
   return (
     <>
       <style>{`
@@ -1256,12 +1279,12 @@ export default function ReviewQueue() {
           <select value={pubFilter} onChange={e => setPubFilter(e.target.value)}
             style={{ background: pubFilter ? C.lift3 : C.lift2, border: "none", color: pubFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif", maxWidth: 160 }}>
             <option value="">Publication</option>
-            {pubList.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {activePubList.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <select value={eventFilter} onChange={e => setEventFilter(e.target.value)}
             style={{ background: eventFilter ? C.lift3 : C.lift2, border: "none", color: eventFilter ? C.text : C.muted, padding: "7px 14px", fontSize: 13, borderRadius: 20, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif", maxWidth: 180 }}>
             <option value="">Event</option>
-            {events.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            {activeEvents.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
           {hasActiveFilters && (
             <button onClick={clearFilters}
