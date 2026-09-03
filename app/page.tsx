@@ -29,6 +29,16 @@ export default function TagStudio() {
   const [flash, setFlash] = useState(false);
   const [loading, setLoading] = useState(true);
   const pendingLookId = useRef<string | null>(null);
+  // Background-refresh plumbing. `loadData` is called once on mount, but
+  // Tag Studio tabs stay open for hours during an audit session — long
+  // enough for looks to be added, promoted, or archived from Intake,
+  // Review, or another Tag Studio tab and never show up here. The focus
+  // and visibility listeners below re-run loadData in background mode
+  // when the user returns to this tab; the throttle prevents spammy
+  // refetches from rapid tab-switching. The manual button lets the user
+  // force a refresh mid-session without leaving the page.
+  const lastLoadRef = useRef<number>(Date.now());
+  const [refreshing, setRefreshing] = useState(false);
   const [brandFilter, setBrandFilter] = useState(() => { try { return localStorage.getItem("ts_brand") || "all"; } catch { return "all"; } });
   const [statusFilter, setStatusFilter] = useState<string>(() => { try { return localStorage.getItem("ts_status") || "published"; } catch { return "published"; } });
   const [untaggedOnly, setUntaggedOnly] = useState(false);
@@ -62,6 +72,25 @@ export default function TagStudio() {
   const [loadingCounts, setLoadingCounts] = useState<Set<string>>(new Set());
 
   useEffect(() => { loadData(); }, []);
+
+  // Background-refresh when the tab regains focus or becomes visible again,
+  // but only if the last successful load is at least 10s old — prevents a
+  // storm of refetches from rapid tab-switching. Refresh runs in background
+  // mode so the grid stays on screen instead of flashing the loading state.
+  useEffect(() => {
+    const REFRESH_THROTTLE_MS = 10_000;
+    const maybeRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < REFRESH_THROTTLE_MS) return;
+      loadData({ background: true });
+    };
+    window.addEventListener("focus", maybeRefresh);
+    document.addEventListener("visibilitychange", maybeRefresh);
+    return () => {
+      window.removeEventListener("focus", maybeRefresh);
+      document.removeEventListener("visibilitychange", maybeRefresh);
+    };
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     let f = looks;
@@ -257,8 +286,10 @@ export default function TagStudio() {
 
   // ── Data loading ─────────────────────────────────────────────────────────────
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (opts: { background?: boolean } = {}) => {
+    const isBg = opts.background === true;
+    if (isBg) setRefreshing(true);
+    else setLoading(true);
     try {
       const [l, t, humanTagged, aiTagged] = await Promise.all([
         // credit_order was dropped from look_brand_credits by the Aug 2026
@@ -310,8 +341,10 @@ export default function TagStudio() {
       setBrands(derivedBrands);
       setTagsByType(grouped);
       setTaggedLookIds(taggedSet);
+      lastLoadRef.current = Date.now();
     } catch(e) { console.error(e); }
-    setLoading(false);
+    if (isBg) setRefreshing(false);
+    else setLoading(false);
   };
 
   const loadTags = async (lookId: string) => {
@@ -654,6 +687,12 @@ export default function TagStudio() {
               Browse
             </button>
           </div>
+
+          <button onClick={() => loadData({ background: true })} disabled={refreshing || loading}
+            title="Refetch looks, tags, and credits from the archive"
+            style={{background:"#484848",border:"1px solid #606060",color:C.text,padding:"7px 12px",fontSize:13,borderRadius:20,cursor:refreshing||loading?"default":"pointer",fontFamily:"Inter,sans-serif",fontWeight:500,opacity:refreshing||loading?0.6:1}}>
+            {refreshing ? "Refreshing…" : "↻ Refresh"}
+          </button>
 
           <span style={{fontSize:12,color:flash&&!saving?C.green:C.muted,opacity:saving||flash?1:0,transition:"opacity 0.3s",minWidth:60,textAlign:"right",fontWeight:500}}>
             {saving ? "saving…" : "saved ✓"}
