@@ -8,7 +8,41 @@ import { C, FONT_IMPORT } from "@/lib/theme";
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function slugify(str: string) {
-  return str.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  // Unaccent so global names produce clean ASCII slugs: "Andrés Durán" →
+  // "andres-duran", "João" → "joao", "Gökhan Yavaş" → "gokhan-yavas". Without
+  // this, the [^a-z0-9] regex below would eat every diacritic and turn
+  // "Andrés" into "andr-s". Two-stage:
+  //
+  //   1. Explicit map for Latin-extended characters that DON'T decompose
+  //      under Unicode NFD — Đ/đ, Ø/ø, Ł/ł, ß, Æ/æ, Œ/œ, ı/İ, Ð/ð, Þ/þ.
+  //      These stay as-is after NFD, so the regex would strip them without
+  //      the map. Ordering matters: apply the map before NFD.
+  //
+  //   2. NFD decomposes accented characters into base letter + combining
+  //      marks (é → e + ◌́), then the combining-marks range (U+0300–U+036F)
+  //      is stripped. Handles the vast majority of Latin diacritics.
+  //
+  // NOTE: kept identical to slugify() in app/review/page.tsx. Any change to
+  // one must be applied to the other until this is factored into a shared
+  // lib/slug.ts helper.
+  const map: Record<string, string> = {
+    "Đ": "d", "đ": "d", "Ð": "d", "ð": "d",
+    "Ø": "o", "ø": "o",
+    "Ł": "l", "ł": "l",
+    "ß": "ss",
+    "Æ": "ae", "æ": "ae",
+    "Œ": "oe", "œ": "oe",
+    "ı": "i", "İ": "i",
+    "Þ": "th", "þ": "th",
+  };
+  return str
+    .split("").map(c => map[c] ?? c).join("")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 // ── Labelled Typeahead (top-level fields) ─────────────────────────────────────
