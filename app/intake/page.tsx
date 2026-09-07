@@ -919,7 +919,7 @@ export default function IntakePage() {
                     <button tabIndex={-1} onClick={() => removeBrandRow(b.key)} style={s.rowX}>×</button>
                   </div>
                 ))}
-                {isCollab && (
+                {(brandRows.length === 0 || isCollab) && (
                   <button onClick={addBrandRow} style={s.addRow}>+ Add brand</button>
                 )}
               </div>
