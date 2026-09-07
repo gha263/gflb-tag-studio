@@ -1469,7 +1469,7 @@ export default function ReviewQueue() {
                           <button tabIndex={-1} onClick={() => removeBrandRow(b.key)} style={{ background: "none", border: "none", color: C.muted, fontSize: 20, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
                         </div>
                       ))}
-                      {editIsCollab && (
+                      {(brandRows.length === 0 || editIsCollab) && (
                         <button onClick={addBrandRow} style={{ alignSelf: "flex-start", background: "transparent", border: `1.5px dashed ${C.lift3}`, color: C.muted, padding: "7px 14px", fontSize: 13, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add brand</button>
                       )}
                     </div>
