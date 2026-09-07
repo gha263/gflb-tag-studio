@@ -239,7 +239,18 @@ function CreateBrandModal({ initialName, locations, people, onSave, onPersonCrea
   const [website, setWebsite] = useState("");
   const [country, setCountry] = useState<any>(null);
   const [city, setCity] = useState<any>(null);
-  const [cdPerson, setCdPerson] = useState<any>(null); // existing person or {isNew: true, name}
+  // directors: multiple rows, each with a person (existing or {isNew,name}) and a role
+  // that becomes the new person's primary_role. Roles chosen from what the DB actually
+  // uses on brand_directors links (designer=225, creative director=8, founder as an
+  // editorial concept). An existing person's primary_role is left untouched.
+  type DirectorRow = { key: string; person: any; role: string };
+  const [directors, setDirectors] = useState<DirectorRow[]>([
+    { key: `d-init-${Date.now()}`, person: null, role: "designer" },
+  ]);
+  const addDirector = () => setDirectors(prev => [...prev, { key: `d-${Date.now()}-${prev.length}`, person: null, role: "designer" }]);
+  const removeDirector = (key: string) => setDirectors(prev => prev.filter(d => d.key !== key));
+  const updateDirectorPerson = (key: string, person: any) => setDirectors(prev => prev.map(d => d.key === key ? { ...d, person } : d));
+  const updateDirectorRole = (key: string, role: string) => setDirectors(prev => prev.map(d => d.key === key ? { ...d, role } : d));
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -255,25 +266,40 @@ function CreateBrandModal({ initialName, locations, people, onSave, onPersonCrea
       if (!brandRes.ok) throw new Error(await brandRes.text());
       const [createdBrand] = await brandRes.json();
 
-      // 2. Handle creative director
-      let cdPersonId = cdPerson?.isNew ? null : cdPerson?.id;
-      if (cdPerson?.isNew && cdPerson.name) {
-        const personRes = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
-          method: "POST",
-          headers: { ...H, Prefer: "return=representation" },
-          body: JSON.stringify({ name: cdPerson.name.trim(), slug: slugify(cdPerson.name), primary_role: "designer" }),
-        });
-        if (!personRes.ok) throw new Error(await personRes.text());
-        const [createdPerson] = await personRes.json();
-        cdPersonId = createdPerson.id;
-        if (onPersonCreated) onPersonCreated(createdPerson);
+      // 2. For each director row that has a person, create the person if new and
+      // link via brand_directors. Failures on one row don't abort the others —
+      // we collect them and surface at the end. Empty rows (no person picked)
+      // are skipped silently.
+      const failures: string[] = [];
+      for (const d of directors) {
+        if (!d.person) continue;
+        try {
+          let personId = d.person.isNew ? null : d.person.id;
+          if (d.person.isNew && d.person.name) {
+            const personRes = await fetch(`${SUPABASE_URL}/rest/v1/people`, {
+              method: "POST",
+              headers: { ...H, Prefer: "return=representation" },
+              body: JSON.stringify({ name: d.person.name.trim(), slug: slugify(d.person.name), primary_role: d.role }),
+            });
+            if (!personRes.ok) throw new Error(await personRes.text());
+            const [createdPerson] = await personRes.json();
+            personId = createdPerson.id;
+            if (onPersonCreated) onPersonCreated(createdPerson);
+          }
+          if (personId && createdBrand.id) {
+            const linkRes = await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
+              method: "POST",
+              headers: { ...H, Prefer: "return=minimal" },
+              body: JSON.stringify({ brand_id: createdBrand.id, person_id: personId, is_current: true }),
+            });
+            if (!linkRes.ok) throw new Error(await linkRes.text());
+          }
+        } catch (e: any) {
+          failures.push(`${d.person.name || "person"}: ${e.message}`);
+        }
       }
-      if (cdPersonId && createdBrand.id) {
-        await fetch(`${SUPABASE_URL}/rest/v1/brand_directors`, {
-          method: "POST",
-          headers: { ...H, Prefer: "return=minimal" },
-          body: JSON.stringify({ brand_id: createdBrand.id, person_id: cdPersonId, is_current: true }),
-        });
+      if (failures.length > 0) {
+        alert(`Brand created, but some director links failed:\n${failures.join("\n")}`);
       }
 
       onSave(createdBrand);
@@ -288,22 +314,41 @@ function CreateBrandModal({ initialName, locations, people, onSave, onPersonCrea
       <F label="Website"><input style={s.input} value={website} onChange={e => setWebsite(e.target.value)} placeholder="https://..." /></F>
       <Typeahead label="Country" items={locations.filter((l: any) => l.location_type === "country")} value={country} onChange={setCountry} onClear={() => setCountry(null)} />
       <Typeahead label="City" items={locations.filter((l: any) => l.location_type === "city")} value={city} onChange={setCity} onClear={() => setCity(null)} />
-      <Typeahead
-        label="Designer"
-        items={people || []}
-        value={cdPerson?.isNew ? null : cdPerson}
-        onChange={setCdPerson}
-        onClear={() => setCdPerson(null)}
-        placeholder="Search or create..."
-        onCreateClick={(n: string) => setCdPerson({ isNew: true, name: n, id: null })}
-      />
-      {cdPerson?.isNew && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: s.input.backgroundColor, borderRadius: 12, fontSize: 13 }}>
-          <span style={{ color: "#ececec", flex: 1 }}>{cdPerson.name}</span>
-          <span style={{ color: "#8e8ea0", fontSize: 11 }}>new person</span>
-          <button onClick={() => setCdPerson(null)} tabIndex={-1} style={{ background: "none", border: "none", color: "#8e8ea0", fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+      <F label="Directors">
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {directors.map(d => (
+            <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {d.person ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: s.input.backgroundColor, borderRadius: 12, fontSize: 13 }}>
+                    <span style={{ color: "#ececec", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.person.name}</span>
+                    {d.person.isNew && <span style={{ color: "#8e8ea0", fontSize: 11, flexShrink: 0 }}>new</span>}
+                    <button onClick={() => updateDirectorPerson(d.key, null)} tabIndex={-1} style={{ background: "none", border: "none", color: "#8e8ea0", fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+                  </div>
+                ) : (
+                  <Typeahead
+                    items={people || []}
+                    value={null}
+                    onChange={(p: any) => updateDirectorPerson(d.key, p)}
+                    onClear={() => updateDirectorPerson(d.key, null)}
+                    placeholder="Search or create..."
+                    onCreateClick={(n: string) => updateDirectorPerson(d.key, { isNew: true, name: n, id: null })}
+                  />
+                )}
+              </div>
+              <select value={d.role} onChange={e => updateDirectorRole(d.key, e.target.value)} style={{ background: s.input.backgroundColor, border: "none", color: "#ececec", padding: "9px 10px", fontSize: 12, borderRadius: 10, outline: "none", cursor: "pointer", fontFamily: "Inter,sans-serif", flexShrink: 0 }}>
+                <option value="designer">Designer</option>
+                <option value="creative director">Creative Director</option>
+                <option value="founder">Founder</option>
+              </select>
+              {directors.length > 1 && (
+                <button onClick={() => removeDirector(d.key)} tabIndex={-1} style={{ background: "none", border: "none", color: "#8e8ea0", fontSize: 20, cursor: "pointer", padding: "0 4px", lineHeight: 1, flexShrink: 0 }}>×</button>
+              )}
+            </div>
+          ))}
+          <button onClick={addDirector} style={{ alignSelf: "flex-start", background: "transparent", border: "1.5px dashed #3a3a3a", color: "#8e8ea0", padding: "6px 12px", fontSize: 12, cursor: "pointer", borderRadius: 20, fontFamily: "Inter,sans-serif" }}>+ Add director</button>
         </div>
-      )}
+      </F>
     </Modal>
   );
 }
